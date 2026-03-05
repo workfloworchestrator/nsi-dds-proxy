@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     http_timeout_seconds: float = 30.0
     dds_client_cert: str = "client-certificate.pem"
     dds_client_key: str = "client-private-key.pem"
+    log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file="dds_proxy.env", env_file_encoding="utf-8")
 

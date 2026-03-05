@@ -28,20 +28,55 @@ from dds_proxy.routers import topologies, switching_services, stps, sdps
 
 def configure_logging() -> None:
     import logging
-    logging.basicConfig(format="%(message)s", level=logging.DEBUG)
+    settings = get_settings()
+    numeric_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
+    # Shared pre-processing steps applied to every log record regardless of origin.
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+    ]
+
+    # structlog-native loggers: run shared processors, then hand the event dict
+    # off to ProcessorFormatter via wrap_for_formatter so it can render it with
+    # the same formatter used for stdlib (uvicorn) records.
     structlog.configure(
-        processors=[
-            structlog.stdlib.add_log_level,
-            structlog.stdlib.add_logger_name,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.dev.ConsoleRenderer(),   # human-friendly coloured output
+        processors=shared_processors + [
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(10),  # DEBUG and above
+        wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
         context_class=dict,
         logger_factory=structlog.stdlib.LoggerFactory(),
     )
+
+    # ProcessorFormatter renders both structlog-native records (already processed
+    # by shared_processors above) and foreign stdlib records (uvicorn, etc., which
+    # get shared_processors applied via foreign_pre_chain).
+    # remove_processors_meta strips internal keys (_record, _from_structlog) so
+    # they never appear in the rendered output.
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.dev.ConsoleRenderer(),
+        ],
+        foreign_pre_chain=shared_processors,
+    )
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(numeric_level)
+
+    # Tell uvicorn not to touch its own log config so our handler wins.
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvi_logger = logging.getLogger(name)
+        uvi_logger.handlers.clear()
+        uvi_logger.propagate = True
 
 
 # ---------------------------------------------------------------------------
@@ -59,6 +94,7 @@ async def lifespan(app: FastAPI):
         dds_base_url=settings.dds_base_url,
         cache_ttl=settings.cache_ttl_seconds,
         cert=settings.dds_client_cert,
+        log_level=settings.log_level.upper(),
     )
 
     ssl_context = create_default_context()
@@ -115,4 +151,4 @@ async def health() -> dict:
 
 def run() -> None:
     import uvicorn
-    uvicorn.run("dds_proxy.main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("dds_proxy.main:app", host="0.0.0.0", port=8000, reload=False, log_config=None)
