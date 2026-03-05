@@ -28,7 +28,12 @@ from dds_proxy.routers import sdps, stps, switching_services, topologies
 
 
 def configure_logging() -> None:
-    """Configure logging."""
+    """Configure structlog and the stdlib root logger to share a single output pipeline.
+
+    Both structlog-native loggers and foreign stdlib loggers (e.g. uvicorn) are
+    routed through a structlog ``ProcessorFormatter``, ensuring consistent
+    formatting across all log sources. The log level is read from settings.
+    """
     import logging
 
     settings = get_settings()
@@ -90,10 +95,12 @@ def configure_logging() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Context manager for lifespan.
+    """Manage application startup and shutdown.
 
-    The lifespan parameter defines code that runs when the application
-    starts up and shuts down, using a single async context manager.
+    On startup: configures logging, builds an SSL context from the configured
+    client certificate and key, and creates a shared ``httpx.AsyncClient``
+    attached to ``app.state.http_client``.
+    On shutdown: closes the HTTP client gracefully.
     """
     configure_logging()
     log = structlog.get_logger(__name__)
@@ -104,6 +111,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         dds_base_url=settings.dds_base_url,
         cache_ttl=settings.cache_ttl_seconds,
         cert=settings.dds_client_cert,
+        host=settings.dds_proxy_host,
+        port=settings.dds_proxy_port,
         log_level=settings.log_level.upper(),
     )
 
@@ -162,7 +171,10 @@ async def health() -> dict:
 
 
 def run() -> None:
-    """Entry point to run the app."""
+    """Start the uvicorn server using host and port from settings."""
     import uvicorn
 
-    uvicorn.run("dds_proxy.main:app", host="0.0.0.0", port=8000, reload=False, log_config=None)
+    settings = get_settings()
+    uvicorn.run(
+        "dds_proxy.main:app", host=settings.dds_proxy_host, port=settings.dds_proxy_port, reload=False, log_config=None
+    )

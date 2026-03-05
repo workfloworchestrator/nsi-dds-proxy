@@ -12,24 +12,37 @@
 # limitations under the License.
 #
 from functools import lru_cache
+from pathlib import Path
 
+from pydantic import FilePath
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """DDS Proxy Settings."""
+    """Application settings loaded from environment variables or ``dds_proxy.env``.
+
+    All fields can be overridden by setting the corresponding environment
+    variable (uppercased field name). Certificate fields are validated as
+    existing files at startup.
+    """
 
     dds_base_url: str = "https://dds.nsi.anaeng.global/dds"
     cache_ttl_seconds: int = 60
     http_timeout_seconds: float = 30.0
-    dds_client_cert: str = "client-certificate.pem"
-    dds_client_key: str = "client-private-key.pem"
+    dds_client_cert: FilePath = Path("client-certificate.pem")
+    dds_client_key: FilePath = Path("client-private-key.pem")
     log_level: str = "INFO"
+    dds_proxy_host: str = "localhost"
+    dds_proxy_port: int = 8000
 
     model_config = SettingsConfigDict(env_file="dds_proxy.env", env_file_encoding="utf-8")
 
 
 @lru_cache
 def get_settings() -> Settings:
-    """Get cached settings."""
+    """Return the cached application settings instance.
+
+    Uses ``lru_cache`` so settings are read from the environment only once
+    for the lifetime of the process.
+    """
     return Settings()
