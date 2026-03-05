@@ -11,22 +11,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""
-Unit tests for app/models.py — verifies field aliases and serialisation.
-"""
+"""Unit tests for app/models.py — verifies field aliases and serialisation."""
 
-import pytest
 from dds_proxy.models import (
     Lifetime,
-    Topology,
-    SwitchingService,
-    ServiceTerminationPoint,
     ServiceDemarcationPoint,
+    ServiceTerminationPoint,
+    SwitchingService,
+    Topology,
 )
 
 
 class TestLifetime:
-
     def test_basic(self):
         lt = Lifetime(start="2025-01-01T00:00:00Z", end="2026-01-01T00:00:00Z")
         assert lt.start == "2025-01-01T00:00:00Z"
@@ -34,7 +30,6 @@ class TestLifetime:
 
 
 class TestTopology:
-
     def test_construct(self):
         t = Topology(
             id="urn:ogf:network:example.net:2020:topology",
@@ -47,7 +42,6 @@ class TestTopology:
 
 
 class TestSwitchingService:
-
     def test_construct_with_python_names(self):
         ss = SwitchingService(
             id="urn:ogf:network:example.net:2020:topology:switch",
@@ -72,14 +66,11 @@ class TestSwitchingService:
         assert "topologyId" in data
 
     def test_label_swapping_false(self):
-        ss = SwitchingService(
-            id="x", encoding="", label_swapping=False, label_type="", topology_id=""
-        )
+        ss = SwitchingService(id="x", encoding="", label_swapping=False, label_type="", topology_id="")
         assert ss.label_swapping is False
 
 
 class TestServiceTerminationPoint:
-
     def test_construct(self):
         stp = ServiceTerminationPoint(
             id="urn:ogf:network:example.net:2020:topology:port-1",
@@ -92,16 +83,13 @@ class TestServiceTerminationPoint:
         assert stp.label_group == "100-200"
 
     def test_serialises_with_pascal_aliases(self):
-        stp = ServiceTerminationPoint(
-            id="x", name="n", capacity=0, label_group="lg", switching_service_id="ssid"
-        )
+        stp = ServiceTerminationPoint(id="x", name="n", capacity=0, label_group="lg", switching_service_id="ssid")
         data = stp.model_dump(by_alias=True)
         assert "LabelGroup" in data
         assert "SwitchingServiceId" in data
 
 
 class TestServiceDemarcationPoint:
-
     def test_construct(self):
         sdp = ServiceDemarcationPoint(
             stp_a_id="urn:ogf:network:example.net:2020:topology:port-1",

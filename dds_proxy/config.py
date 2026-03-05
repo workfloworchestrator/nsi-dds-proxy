@@ -17,6 +17,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """DDS Proxy Settings."""
+
     dds_base_url: str = "https://dds.nsi.anaeng.global/dds"
     cache_ttl_seconds: int = 60
     http_timeout_seconds: float = 30.0
@@ -29,4 +31,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Get cached settings."""
     return Settings()

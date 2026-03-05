@@ -12,22 +12,25 @@
 # limitations under the License.
 #
 from contextlib import asynccontextmanager
+from ssl import create_default_context
+from typing import AsyncIterator
 
 import httpx
 import structlog
 from fastapi import FastAPI
-from ssl import create_default_context
 
 from dds_proxy.config import get_settings
-from dds_proxy.routers import topologies, switching_services, stps, sdps
-
+from dds_proxy.routers import sdps, stps, switching_services, topologies
 
 # ---------------------------------------------------------------------------
 # structlog configuration
 # ---------------------------------------------------------------------------
 
+
 def configure_logging() -> None:
+    """Configure logging."""
     import logging
+
     settings = get_settings()
     numeric_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
@@ -43,7 +46,8 @@ def configure_logging() -> None:
     # off to ProcessorFormatter via wrap_for_formatter so it can render it with
     # the same formatter used for stdlib (uvicorn) records.
     structlog.configure(
-        processors=shared_processors + [
+        processors=shared_processors
+        + [
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
@@ -83,8 +87,14 @@ def configure_logging() -> None:
 # Lifespan
 # ---------------------------------------------------------------------------
 
+
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Context manager for lifespan.
+
+    The lifespan parameter defines code that runs when the application
+    starts up and shuts down, using a single async context manager.
+    """
     configure_logging()
     log = structlog.get_logger(__name__)
 
@@ -139,6 +149,7 @@ app.include_router(sdps.router)
 # Health check
 # ---------------------------------------------------------------------------
 
+
 @app.get("/health", tags=["meta"])
 async def health() -> dict:
     """Quick liveness check — useful for load balancers and k8s probes."""
@@ -149,6 +160,9 @@ async def health() -> dict:
 # Entrypoint
 # ---------------------------------------------------------------------------
 
+
 def run() -> None:
+    """Entry point to run the app."""
     import uvicorn
+
     uvicorn.run("dds_proxy.main:app", host="0.0.0.0", port=8000, reload=False, log_config=None)

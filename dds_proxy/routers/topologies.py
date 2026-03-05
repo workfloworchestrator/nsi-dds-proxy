@@ -11,11 +11,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from dds_proxy.config import get_settings
-from dds_proxy.models import Topology
 from dds_proxy.dds_client import fetch_topologies
+from dds_proxy.models import Topology
 
 router = APIRouter(tags=["topologies"])
 

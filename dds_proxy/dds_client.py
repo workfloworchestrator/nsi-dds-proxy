@@ -11,8 +11,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""
-DDS client — fetches the DDS collection, extracts topology documents
+"""The DDS client.
+
+Fetches the DDS collection, extracts topology documents
 (type vnd.ogf.nsi.topology.v2+xml), and parses NML XML into our
 Pydantic models.
 """
@@ -20,20 +21,19 @@ Pydantic models.
 import base64
 import gzip
 import time
-from typing import Any
 
 import httpx
 import structlog
 from lxml import etree
 
+from dds_proxy.config import get_settings
 from dds_proxy.models import (
     Lifetime,
-    Topology,
-    SwitchingService,
-    ServiceTerminationPoint,
     ServiceDemarcationPoint,
+    ServiceTerminationPoint,
+    SwitchingService,
+    Topology,
 )
-from dds_proxy.config import get_settings
 
 log = structlog.get_logger(__name__)
 
@@ -42,26 +42,28 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 NS = {
-    "dds":  "http://schemas.ogf.org/nsi/2014/02/discovery/types",
-    "nml":  "http://schemas.ogf.org/nml/2013/05/base#",
-    "nsi":  "http://schemas.ogf.org/nsi/2013/12/services/definition",
-    "eth":  "http://schemas.ogf.org/nml/2012/10/ethernet",
+    "dds": "http://schemas.ogf.org/nsi/2014/02/discovery/types",
+    "nml": "http://schemas.ogf.org/nml/2013/05/base#",
+    "nsi": "http://schemas.ogf.org/nsi/2013/12/services/definition",
+    "eth": "http://schemas.ogf.org/nml/2012/10/ethernet",
 }
 
 TOPOLOGY_CONTENT_TYPE = "vnd.ogf.nsi.topology.v2+xml"
 
-HAS_SERVICE      = "http://schemas.ogf.org/nml/2013/05/base#hasService"
+HAS_SERVICE = "http://schemas.ogf.org/nml/2013/05/base#hasService"
 HAS_INBOUND_PORT = "http://schemas.ogf.org/nml/2013/05/base#hasInboundPort"
-IS_ALIAS         = "http://schemas.ogf.org/nml/2013/05/base#isAlias"
+IS_ALIAS = "http://schemas.ogf.org/nml/2013/05/base#isAlias"
 
 # ---------------------------------------------------------------------------
 # Simple TTL cache
 # ---------------------------------------------------------------------------
 
-_cache: dict[str, tuple[float, Any]] = {}
+TopologyDocuments = list[tuple[etree._Element, etree._Element]]
+
+_cache: dict[str, tuple[float, TopologyDocuments]] = {}
 
 
-def _cache_get(key: str) -> Any | None:
+def _cache_get(key: str) -> TopologyDocuments | None:
     if key not in _cache:
         return None
     ts, data = _cache[key]
@@ -75,7 +77,7 @@ def _cache_get(key: str) -> Any | None:
     return data
 
 
-def _cache_set(key: str, data: Any) -> None:
+def _cache_set(key: str, data: TopologyDocuments) -> None:
     _cache[key] = (time.monotonic(), data)
     log.debug("cache.set", key=key)
 
@@ -83,6 +85,7 @@ def _cache_set(key: str, data: Any) -> None:
 # ---------------------------------------------------------------------------
 # Fetch helpers
 # ---------------------------------------------------------------------------
+
 
 async def _fetch_collection(client: httpx.AsyncClient, dds_base_url: str) -> etree._Element:
     url = f"{dds_base_url.rstrip('/')}/documents"
@@ -161,10 +164,12 @@ async def _get_topology_documents(
 # Public parse functions
 # ---------------------------------------------------------------------------
 
+
 async def fetch_topologies(
     client: httpx.AsyncClient,
     dds_base_url: str,
 ) -> list[Topology]:
+    """Fetch topologies from DDS."""
     log.info("fetch.topologies.start")
     docs = await _get_topology_documents(client, dds_base_url)
     topologies = []
@@ -186,12 +191,14 @@ async def fetch_topologies(
             end = dds_doc.get("expires", "")
 
         log.debug("fetch.topologies.parsed", topo_id=topo_id, name=name, version=version)
-        topologies.append(Topology(
-            id=topo_id,
-            version=version,
-            name=name,
-            lifetime=Lifetime(start=start, end=end),
-        ))
+        topologies.append(
+            Topology(
+                id=topo_id,
+                version=version,
+                name=name,
+                lifetime=Lifetime(start=start, end=end),
+            )
+        )
 
     log.info("fetch.topologies.done", count=len(topologies))
     return topologies
@@ -201,6 +208,7 @@ async def fetch_switching_services(
     client: httpx.AsyncClient,
     dds_base_url: str,
 ) -> list[SwitchingService]:
+    """Fetch switching services from DDS."""
     log.info("fetch.switching_services.start")
     docs = await _get_topology_documents(client, dds_base_url)
     services = []
@@ -217,13 +225,15 @@ async def fetch_switching_services(
             label_type = ss_el.get("labelType", "")
             log.debug("fetch.switching_services.parsed", ss_id=ss_id, encoding=encoding, label_swapping=label_swapping)
 
-            services.append(SwitchingService(
-                id=ss_id,
-                encoding=encoding,
-                label_swapping=label_swapping,
-                label_type=label_type,
-                topology_id=topology_id,
-            ))
+            services.append(
+                SwitchingService(
+                    id=ss_id,
+                    encoding=encoding,
+                    label_swapping=label_swapping,
+                    label_type=label_type,
+                    topology_id=topology_id,
+                )
+            )
 
     log.info("fetch.switching_services.done", count=len(services))
     return services
@@ -233,7 +243,8 @@ async def fetch_stps(
     client: httpx.AsyncClient,
     dds_base_url: str,
 ) -> list[ServiceTerminationPoint]:
-    """
+    """Fetch Service Termination Points from DDS.
+
     STPs are the BidirectionalPort elements that are direct children of the
     Topology. Capacity and LabelGroup live on the corresponding inbound
     PortGroup (id = port_id + inbound_suffix) inside the hasInboundPort Relation.
@@ -307,14 +318,18 @@ async def fetch_stps(
             else:
                 log.debug("fetch.stps.no_inbound_portgroup", port_id=port_id)
 
-            log.debug("fetch.stps.parsed", port_id=port_id, name=name, capacity=capacity, label_group=label_group, ss_id=ss_id)
-            stps.append(ServiceTerminationPoint(
-                id=port_id,
-                name=name,
-                capacity=capacity,
-                label_group=label_group,
-                switching_service_id=ss_id,
-            ))
+            log.debug(
+                "fetch.stps.parsed", port_id=port_id, name=name, capacity=capacity, label_group=label_group, ss_id=ss_id
+            )
+            stps.append(
+                ServiceTerminationPoint(
+                    id=port_id,
+                    name=name,
+                    capacity=capacity,
+                    label_group=label_group,
+                    switching_service_id=ss_id,
+                )
+            )
 
     log.info("fetch.stps.done", count=len(stps))
     return stps
@@ -324,7 +339,8 @@ async def fetch_sdps(
     client: httpx.AsyncClient,
     dds_base_url: str,
 ) -> list[ServiceDemarcationPoint]:
-    """
+    """Fetch Service Demarcation Points from DDS.
+
     SDPs are derived from isAlias relations on PortGroup elements inside the
     hasInboundPort and hasOutboundPort Relations. We build a reverse map from
     PortGroup id back to its parent BidirectionalPort id so we don't have to
@@ -400,10 +416,12 @@ async def fetch_sdps(
         if pair not in seen and reverse not in seen:
             seen.add(pair)
             log.debug("fetch.sdps.parsed", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
-            sdps.append(ServiceDemarcationPoint(
-                stp_a_id=stp_a_id,
-                stp_z_id=stp_z_id,
-            ))
+            sdps.append(
+                ServiceDemarcationPoint(
+                    stp_a_id=stp_a_id,
+                    stp_z_id=stp_z_id,
+                )
+            )
 
     log.info("fetch.sdps.done", count=len(sdps))
     return sdps

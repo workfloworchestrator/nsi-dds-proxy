@@ -11,27 +11,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""
-Shared fixtures and NML XML builders for the dds-proxy test suite.
-"""
+"""Shared fixtures and NML XML builders for the dds-proxy test suite."""
 
 import base64
 import gzip
-import pytest
-from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch
 
-from dds_proxy.main import app
+import pytest
+from fastapi.testclient import TestClient
+
 from dds_proxy.config import Settings, get_settings
+from dds_proxy.main import app
 
 # ---------------------------------------------------------------------------
 # Namespace constants (mirrors dds_client.py)
 # ---------------------------------------------------------------------------
 
-DDS_NS  = "http://schemas.ogf.org/nsi/2014/02/discovery/types"
-NML_NS  = "http://schemas.ogf.org/nml/2013/05/base#"
-ETH_NS  = "http://schemas.ogf.org/nml/2012/10/ethernet"
-ALIAS   = f"{NML_NS}isAlias"
+DDS_NS = "http://schemas.ogf.org/nsi/2014/02/discovery/types"
+NML_NS = "http://schemas.ogf.org/nml/2013/05/base#"
+ETH_NS = "http://schemas.ogf.org/nml/2012/10/ethernet"
+ALIAS = f"{NML_NS}isAlias"
 TOPO_TYPE = "vnd.ogf.nsi.topology.v2+xml"
 
 # ---------------------------------------------------------------------------
@@ -51,7 +50,14 @@ TEST_SETTINGS = Settings(
 def mock_settings():
     """Patch get_settings() globally so tests never need a real .env file."""
     get_settings.cache_clear()
-    with patch("dds_proxy.config.get_settings", return_value=TEST_SETTINGS),          patch("dds_proxy.dds_client.get_settings", return_value=TEST_SETTINGS),          patch("dds_proxy.routers.topologies.get_settings", return_value=TEST_SETTINGS),          patch("dds_proxy.routers.switching_services.get_settings", return_value=TEST_SETTINGS),          patch("dds_proxy.routers.stps.get_settings", return_value=TEST_SETTINGS),          patch("dds_proxy.routers.sdps.get_settings", return_value=TEST_SETTINGS):
+    with (
+        patch("dds_proxy.config.get_settings", return_value=TEST_SETTINGS),
+        patch("dds_proxy.dds_client.get_settings", return_value=TEST_SETTINGS),
+        patch("dds_proxy.routers.topologies.get_settings", return_value=TEST_SETTINGS),
+        patch("dds_proxy.routers.switching_services.get_settings", return_value=TEST_SETTINGS),
+        patch("dds_proxy.routers.stps.get_settings", return_value=TEST_SETTINGS),
+        patch("dds_proxy.routers.sdps.get_settings", return_value=TEST_SETTINGS),
+    ):
         yield
     get_settings.cache_clear()
 
@@ -59,6 +65,7 @@ def mock_settings():
 # ---------------------------------------------------------------------------
 # XML builders
 # ---------------------------------------------------------------------------
+
 
 def make_nml_topology(
     topo_id: str = "urn:ogf:network:example.net:2020:topology",
@@ -68,8 +75,7 @@ def make_nml_topology(
     switching_services: list[dict] | None = None,
     ports: list[dict] | None = None,
 ) -> bytes:
-    """
-    Build a minimal NML topology XML document matching the real DDS structure.
+    """Build a minimal NML topology XML document matching the real DDS structure.
 
     switching_services: list of dicts with keys:
         id, encoding, labelSwapping, labelType
@@ -82,14 +88,14 @@ def make_nml_topology(
     """
     # SwitchingService wrapped in a hasService Relation
     ss_xml = ""
-    for ss in (switching_services or []):
+    for ss in switching_services or []:
         ss_xml += f"""
   <nml:Relation type="http://schemas.ogf.org/nml/2013/05/base#hasService" xmlns:nml="{NML_NS}">
     <nml:SwitchingService
-        id="{ss['id']}"
-        encoding="{ss.get('encoding', '')}"
-        labelSwapping="{str(ss.get('labelSwapping', False)).lower()}"
-        labelType="{ss.get('labelType', '')}"
+        id="{ss["id"]}"
+        encoding="{ss.get("encoding", "")}"
+        labelSwapping="{str(ss.get("labelSwapping", False)).lower()}"
+        labelType="{ss.get("labelType", "")}"
         xmlns:nml="{NML_NS}"/>
   </nml:Relation>"""
 
@@ -98,13 +104,13 @@ def make_nml_topology(
     inbound_pg_xml = ""
     outbound_pg_xml = ""
 
-    for p in (ports or []):
-        in_id  = p.get("inbound_pg_id",  f"{p['id']}:in")
+    for p in ports or []:
+        in_id = p.get("inbound_pg_id", f"{p['id']}:in")
         out_id = p.get("outbound_pg_id", f"{p['id']}:out")
 
         bidir_xml += f"""
-  <nml:BidirectionalPort id="{p['id']}" xmlns:nml="{NML_NS}">
-    <nml:name xmlns:nml="{NML_NS}">{p.get('name', p['id'])}</nml:name>
+  <nml:BidirectionalPort id="{p["id"]}" xmlns:nml="{NML_NS}">
+    <nml:name xmlns:nml="{NML_NS}">{p.get("name", p["id"])}</nml:name>
     <nml:PortGroup id="{in_id}" xmlns:nml="{NML_NS}"/>
     <nml:PortGroup id="{out_id}" xmlns:nml="{NML_NS}"/>
   </nml:BidirectionalPort>"""
@@ -114,30 +120,38 @@ def make_nml_topology(
         if p.get("alias_pg_id"):
             alias_inbound_xml = f"""
       <nml:Relation type="{ALIAS}" xmlns:nml="{NML_NS}">
-        <nml:PortGroup id="{p['alias_pg_id']}" xmlns:nml="{NML_NS}"/>
+        <nml:PortGroup id="{p["alias_pg_id"]}" xmlns:nml="{NML_NS}"/>
       </nml:Relation>"""
             # mirror alias on outbound too so bidirectional check passes in tests
             alias_outbound_xml = alias_inbound_xml
 
         inbound_pg_xml += f"""
-    <nml:PortGroup id="{in_id}" encoding="{p.get('encoding', '')}" xmlns:nml="{NML_NS}">
-      <nml:LabelGroup xmlns:nml="{NML_NS}">{p.get('label_group', '')}</nml:LabelGroup>
-      <eth:capacity xmlns:eth="{ETH_NS}">{p.get('capacity', 0)}</eth:capacity>{alias_inbound_xml}
+    <nml:PortGroup id="{in_id}" encoding="{p.get("encoding", "")}" xmlns:nml="{NML_NS}">
+      <nml:LabelGroup xmlns:nml="{NML_NS}">{p.get("label_group", "")}</nml:LabelGroup>
+      <eth:capacity xmlns:eth="{ETH_NS}">{p.get("capacity", 0)}</eth:capacity>{alias_inbound_xml}
     </nml:PortGroup>"""
 
         outbound_pg_xml += f"""
-    <nml:PortGroup id="{out_id}" encoding="{p.get('encoding', '')}" xmlns:nml="{NML_NS}">
-      <nml:LabelGroup xmlns:nml="{NML_NS}">{p.get('label_group', '')}</nml:LabelGroup>
-      <eth:capacity xmlns:eth="{ETH_NS}">{p.get('capacity', 0)}</eth:capacity>{alias_outbound_xml}
+    <nml:PortGroup id="{out_id}" encoding="{p.get("encoding", "")}" xmlns:nml="{NML_NS}">
+      <nml:LabelGroup xmlns:nml="{NML_NS}">{p.get("label_group", "")}</nml:LabelGroup>
+      <eth:capacity xmlns:eth="{ETH_NS}">{p.get("capacity", 0)}</eth:capacity>{alias_outbound_xml}
     </nml:PortGroup>"""
 
-    has_inbound  = f"""
+    has_inbound = (
+        f"""
   <nml:Relation type="http://schemas.ogf.org/nml/2013/05/base#hasInboundPort" xmlns:nml="{NML_NS}">{inbound_pg_xml}
-  </nml:Relation>""" if inbound_pg_xml else ""
+  </nml:Relation>"""
+        if inbound_pg_xml
+        else ""
+    )
 
-    has_outbound = f"""
+    has_outbound = (
+        f"""
   <nml:Relation type="http://schemas.ogf.org/nml/2013/05/base#hasOutboundPort" xmlns:nml="{NML_NS}">{outbound_pg_xml}
-  </nml:Relation>""" if outbound_pg_xml else ""
+  </nml:Relation>"""
+        if outbound_pg_xml
+        else ""
+    )
 
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <nml:Topology
@@ -150,13 +164,14 @@ def make_nml_topology(
     <nml:end xmlns:nml="{NML_NS}">{end}</nml:end>
   </nml:Lifetime>{ss_xml}{bidir_xml}{has_inbound}{has_outbound}
 </nml:Topology>""".encode("utf-8")
+
+
 def gzip_b64(data: bytes) -> str:
     return base64.b64encode(gzip.compress(data)).decode("ascii")
 
 
 def make_dds_collection(topologies: list[dict]) -> bytes:
-    """
-    Build a DDS collection XML document.
+    """Build a DDS collection XML document.
 
     topologies: list of dicts with keys:
         id, version, expires, nml_bytes (raw NML XML bytes)
@@ -166,10 +181,10 @@ def make_dds_collection(topologies: list[dict]) -> bytes:
         encoded = gzip_b64(t["nml_bytes"])
         docs_xml += f"""
         <ns0:document
-            id="{t['id']}"
-            href="https://dds.example.net/dds/documents/{t['id']}"
-            version="{t.get('version', '2026-01-01T00:00:00Z')}"
-            expires="{t.get('expires', '2026-12-31T00:00:00Z')}"
+            id="{t["id"]}"
+            href="https://dds.example.net/dds/documents/{t["id"]}"
+            version="{t.get("version", "2026-01-01T00:00:00Z")}"
+            expires="{t.get("expires", "2026-12-31T00:00:00Z")}"
             xmlns:ns0="{DDS_NS}">
           <nsa>urn:ogf:network:example.net:2020:nsa</nsa>
           <type>{TOPO_TYPE}</type>
@@ -186,63 +201,74 @@ def make_dds_collection(topologies: list[dict]) -> bytes:
 # Reusable test data
 # ---------------------------------------------------------------------------
 
-TOPO_ID     = "urn:ogf:network:example.net:2020:topology"
-TOPO_ID_2   = "urn:ogf:network:other.net:2021:topology"
-SS_ID       = f"{TOPO_ID}:switch:EVTS.ANA"
-SS_ID_2     = f"{TOPO_ID_2}:switch:EVTS.ANA"
-PORT_A      = f"{TOPO_ID}:port-1"
-PORT_A_IN   = f"{PORT_A}:in"
-PORT_A_OUT  = f"{PORT_A}:out"
-PORT_Z      = f"{TOPO_ID_2}:port-99"
-PORT_Z_IN   = f"{PORT_Z}:in"
-PORT_Z_OUT  = f"{PORT_Z}:out"
+TOPO_ID = "urn:ogf:network:example.net:2020:topology"
+TOPO_ID_2 = "urn:ogf:network:other.net:2021:topology"
+SS_ID = f"{TOPO_ID}:switch:EVTS.ANA"
+SS_ID_2 = f"{TOPO_ID_2}:switch:EVTS.ANA"
+PORT_A = f"{TOPO_ID}:port-1"
+PORT_A_IN = f"{PORT_A}:in"
+PORT_A_OUT = f"{PORT_A}:out"
+PORT_Z = f"{TOPO_ID_2}:port-99"
+PORT_Z_IN = f"{PORT_Z}:in"
+PORT_Z_OUT = f"{PORT_Z}:out"
 
 # Two topologies with matching bidirectional aliases so SDPs are emitted
 SIMPLE_NML = make_nml_topology(
     topo_id=TOPO_ID,
     name="Example Network",
-    switching_services=[{
-        "id": SS_ID,
-        "encoding": "http://schemas.ogf.org/nml/2012/10/ethernet",
-        "labelSwapping": True,
-        "labelType": "http://schemas.ogf.org/nml/2012/10/ethernet#vlan",
-    }],
-    ports=[{
-        "id": PORT_A,
-        "name": "Port One",
-        "capacity": 100000,
-        "label_group": "100-200",
-        "alias_pg_id": PORT_Z_IN,
-    }],
+    switching_services=[
+        {
+            "id": SS_ID,
+            "encoding": "http://schemas.ogf.org/nml/2012/10/ethernet",
+            "labelSwapping": True,
+            "labelType": "http://schemas.ogf.org/nml/2012/10/ethernet#vlan",
+        }
+    ],
+    ports=[
+        {
+            "id": PORT_A,
+            "name": "Port One",
+            "capacity": 100000,
+            "label_group": "100-200",
+            "alias_pg_id": PORT_Z_IN,
+        }
+    ],
 )
 
 SIMPLE_NML_2 = make_nml_topology(
     topo_id=TOPO_ID_2,
     name="Other Network",
-    switching_services=[{
-        "id": SS_ID_2,
-        "encoding": "http://schemas.ogf.org/nml/2012/10/ethernet",
-        "labelSwapping": False,
-        "labelType": "http://schemas.ogf.org/nml/2012/10/ethernet#vlan",
-    }],
-    ports=[{
-        "id": PORT_Z,
-        "name": "Port Z",
-        "capacity": 200000,
-        "label_group": "200-300",
-        "alias_pg_id": PORT_A_IN,
-    }],
+    switching_services=[
+        {
+            "id": SS_ID_2,
+            "encoding": "http://schemas.ogf.org/nml/2012/10/ethernet",
+            "labelSwapping": False,
+            "labelType": "http://schemas.ogf.org/nml/2012/10/ethernet#vlan",
+        }
+    ],
+    ports=[
+        {
+            "id": PORT_Z,
+            "name": "Port Z",
+            "capacity": 200000,
+            "label_group": "200-300",
+            "alias_pg_id": PORT_A_IN,
+        }
+    ],
 )
 
-SIMPLE_COLLECTION = make_dds_collection([
-    {"id": TOPO_ID,   "nml_bytes": SIMPLE_NML},
-    {"id": TOPO_ID_2, "nml_bytes": SIMPLE_NML_2},
-])
+SIMPLE_COLLECTION = make_dds_collection(
+    [
+        {"id": TOPO_ID, "nml_bytes": SIMPLE_NML},
+        {"id": TOPO_ID_2, "nml_bytes": SIMPLE_NML_2},
+    ]
+)
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def client():

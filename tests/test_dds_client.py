@@ -11,28 +11,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""
-Unit tests for app/dds_client.py
+"""Unit tests for app/dds_client.py.
 
 These tests exercise the XML parsing logic directly, bypassing HTTP by
 injecting pre-built NML documents into _get_topology_documents.
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from dds_proxy import dds_client
 from tests.conftest import (
-    TOPO_ID, TOPO_ID_2, SS_ID, SS_ID_2, PORT_A, PORT_A_IN, PORT_Z, PORT_Z_IN,
-    SIMPLE_NML, SIMPLE_NML_2, SIMPLE_COLLECTION,
-    make_nml_topology, make_dds_collection,
+    PORT_A,
+    PORT_Z,
+    PORT_Z_IN,
+    SIMPLE_COLLECTION,
+    SS_ID,
+    TOPO_ID,
+    TOPO_ID_2,
+    make_dds_collection,
+    make_nml_topology,
 )
-from lxml import etree
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def make_mock_http(content: bytes) -> AsyncMock:
     mock_http = AsyncMock()
@@ -47,8 +52,8 @@ def make_mock_http(content: bytes) -> AsyncMock:
 # fetch_topologies
 # ---------------------------------------------------------------------------
 
-class TestFetchTopologies:
 
+class TestFetchTopologies:
     @pytest.mark.asyncio
     async def test_returns_topology_with_correct_id(self):
         client = make_mock_http(SIMPLE_COLLECTION)
@@ -100,7 +105,7 @@ class TestFetchTopologies:
     @pytest.mark.asyncio
     async def test_nsa_documents_are_skipped(self):
         """Documents with type vnd.ogf.nsi.nsa.v1+xml must not be parsed as topologies."""
-        nsa_collection = f"""<?xml version="1.0" encoding="UTF-8"?>
+        nsa_collection = """<?xml version="1.0" encoding="UTF-8"?>
 <ns0:collection xmlns:ns0="http://schemas.ogf.org/nsi/2014/02/discovery/types">
   <ns0:documents>
     <ns0:document id="urn:ogf:network:example.net:2020:nsa"
@@ -121,8 +126,8 @@ class TestFetchTopologies:
 # fetch_switching_services
 # ---------------------------------------------------------------------------
 
-class TestFetchSwitchingServices:
 
+class TestFetchSwitchingServices:
     @pytest.mark.asyncio
     async def test_returns_switching_service(self):
         client = make_mock_http(SIMPLE_COLLECTION)
@@ -141,13 +146,15 @@ class TestFetchSwitchingServices:
     @pytest.mark.asyncio
     async def test_label_swapping_false(self):
         nml = make_nml_topology(
-            switching_services=[{
-                "id": SS_ID,
-                "encoding": "http://schemas.ogf.org/nml/2012/10/ethernet",
-                "labelSwapping": False,
-                "labelType": "http://schemas.ogf.org/nml/2012/10/ethernet#vlan",
-                "port_refs": [],
-            }]
+            switching_services=[
+                {
+                    "id": SS_ID,
+                    "encoding": "http://schemas.ogf.org/nml/2012/10/ethernet",
+                    "labelSwapping": False,
+                    "labelType": "http://schemas.ogf.org/nml/2012/10/ethernet#vlan",
+                    "port_refs": [],
+                }
+            ]
         )
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
@@ -184,8 +191,8 @@ class TestFetchSwitchingServices:
 # fetch_stps
 # ---------------------------------------------------------------------------
 
-class TestFetchSTPs:
 
+class TestFetchSTPs:
     @pytest.mark.asyncio
     async def test_returns_stp(self):
         client = make_mock_http(SIMPLE_COLLECTION)
@@ -226,12 +233,14 @@ class TestFetchSTPs:
     async def test_multiple_ports(self):
         port_b = f"{TOPO_ID}:port-2"
         nml = make_nml_topology(
-            switching_services=[{
-                "id": SS_ID,
-                "encoding": "",
-                "labelSwapping": False,
-                "labelType": "",
-            }],
+            switching_services=[
+                {
+                    "id": SS_ID,
+                    "encoding": "",
+                    "labelSwapping": False,
+                    "labelType": "",
+                }
+            ],
             ports=[
                 {"id": PORT_A, "name": "Port A", "capacity": 100000, "label_group": "100-200"},
                 {"id": port_b, "name": "Port B", "capacity": 200000, "label_group": "300-400"},
@@ -251,8 +260,8 @@ class TestFetchSTPs:
 # fetch_sdps
 # ---------------------------------------------------------------------------
 
-class TestFetchSDPs:
 
+class TestFetchSDPs:
     @pytest.mark.asyncio
     async def test_returns_sdp_from_alias(self):
         client = make_mock_http(SIMPLE_COLLECTION)
@@ -264,9 +273,7 @@ class TestFetchSDPs:
 
     @pytest.mark.asyncio
     async def test_no_alias_returns_empty(self):
-        nml = make_nml_topology(
-            ports=[{"id": PORT_A, "name": "Port A", "capacity": 0, "label_group": ""}]
-        )
+        nml = make_nml_topology(ports=[{"id": PORT_A, "name": "Port A", "capacity": 0, "label_group": ""}])
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
         with patch.dict(dds_client._cache, {}, clear=True):
@@ -286,28 +293,30 @@ class TestFetchSDPs:
 
     @pytest.mark.asyncio
     async def test_multiple_aliases(self):
-        port_b    = f"{TOPO_ID}:port-2"
+        port_b = f"{TOPO_ID}:port-2"
         port_b_in = f"{port_b}:in"
-        port_x    = f"{TOPO_ID_2}:port-88"
+        port_x = f"{TOPO_ID_2}:port-88"
         port_x_in = f"{port_x}:in"
         nml1 = make_nml_topology(
             topo_id=TOPO_ID,
             ports=[
                 {"id": PORT_A, "name": "A", "capacity": 0, "label_group": "", "alias_pg_id": PORT_Z_IN},
                 {"id": port_b, "name": "B", "capacity": 0, "label_group": "", "alias_pg_id": port_x_in},
-            ]
+            ],
         )
         nml2 = make_nml_topology(
             topo_id=TOPO_ID_2,
             ports=[
                 {"id": PORT_Z, "name": "Z", "capacity": 0, "label_group": "", "alias_pg_id": f"{PORT_A}:in"},
                 {"id": port_x, "name": "X", "capacity": 0, "label_group": "", "alias_pg_id": port_b_in},
+            ],
+        )
+        collection = make_dds_collection(
+            [
+                {"id": TOPO_ID, "nml_bytes": nml1},
+                {"id": TOPO_ID_2, "nml_bytes": nml2},
             ]
         )
-        collection = make_dds_collection([
-            {"id": TOPO_ID,   "nml_bytes": nml1},
-            {"id": TOPO_ID_2, "nml_bytes": nml2},
-        ])
         client = make_mock_http(collection)
         with patch.dict(dds_client._cache, {}, clear=True):
             result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
@@ -318,8 +327,8 @@ class TestFetchSDPs:
 # Caching
 # ---------------------------------------------------------------------------
 
-class TestCaching:
 
+class TestCaching:
     @pytest.mark.asyncio
     async def test_second_call_uses_cache(self):
         client = make_mock_http(SIMPLE_COLLECTION)

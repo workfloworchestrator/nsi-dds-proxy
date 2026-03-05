@@ -11,30 +11,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""
-Route integration tests for dds-proxy.
+"""Route integration tests for dds-proxy.
 
 Uses FastAPI's TestClient with a mocked HTTP client injected onto app.state,
 so no real network calls are made.
 """
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
-from dds_proxy.main import app
 from dds_proxy import dds_client
+from dds_proxy.main import app
 from tests.conftest import (
-    TOPO_ID, SS_ID, PORT_A, PORT_Z,
-    SIMPLE_COLLECTION, SIMPLE_NML,
-    make_dds_collection, make_nml_topology,
+    PORT_A,
+    PORT_Z,
+    SIMPLE_COLLECTION,
+    SS_ID,
+    TOPO_ID,
+    make_dds_collection,
+    make_nml_topology,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def clear_cache():
@@ -45,8 +48,7 @@ def clear_cache():
 
 @pytest.fixture
 def api():
-    """
-    TestClient with a mock HTTP client injected onto app.state.
+    """TestClient with a mock HTTP client injected onto app.state.
 
     We enter the TestClient context first (which runs the lifespan and creates
     a real httpx.AsyncClient), then immediately overwrite app.state.http_client
@@ -68,8 +70,8 @@ def api():
 # /health
 # ---------------------------------------------------------------------------
 
-class TestHealth:
 
+class TestHealth:
     def test_health_returns_200(self, api):
         client, _ = api
         resp = client.get("/health")
@@ -84,8 +86,8 @@ class TestHealth:
 # GET /topologies
 # ---------------------------------------------------------------------------
 
-class TestTopologiesRoute:
 
+class TestTopologiesRoute:
     def test_returns_200(self, api):
         client, _ = api
         assert client.get("/topologies").status_code == 200
@@ -128,8 +130,8 @@ class TestTopologiesRoute:
 # GET /switching-services
 # ---------------------------------------------------------------------------
 
-class TestSwitchingServicesRoute:
 
+class TestSwitchingServicesRoute:
     def test_returns_200(self, api):
         client, _ = api
         assert client.get("/switching-services").status_code == 200
@@ -159,8 +161,8 @@ class TestSwitchingServicesRoute:
 # GET /service-termination-points
 # ---------------------------------------------------------------------------
 
-class TestSTPsRoute:
 
+class TestSTPsRoute:
     def test_returns_200(self, api):
         client, _ = api
         assert client.get("/service-termination-points").status_code == 200
@@ -190,8 +192,8 @@ class TestSTPsRoute:
 # GET /service-demarcation-points
 # ---------------------------------------------------------------------------
 
-class TestSDPsRoute:
 
+class TestSDPsRoute:
     def test_returns_200(self, api):
         client, _ = api
         assert client.get("/service-demarcation-points").status_code == 200

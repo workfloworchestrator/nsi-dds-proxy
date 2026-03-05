@@ -15,11 +15,15 @@ from pydantic import BaseModel
 
 
 class Lifetime(BaseModel):
+    """Lifetime of Topology."""
+
     start: str
     end: str
 
 
 class Topology(BaseModel):
+    """Topology details."""
+
     id: str
     version: str
     name: str
@@ -29,6 +33,8 @@ class Topology(BaseModel):
 
 
 class SwitchingService(BaseModel):
+    """Switching Service details."""
+
     id: str
     encoding: str
     label_swapping: bool
@@ -46,6 +52,8 @@ class SwitchingService(BaseModel):
 
 
 class ServiceTerminationPoint(BaseModel):
+    """Service termination point details."""
+
     id: str
     name: str
     capacity: int
@@ -62,6 +70,8 @@ class ServiceTerminationPoint(BaseModel):
 
 
 class ServiceDemarcationPoint(BaseModel):
+    """Service demarcation point details."""
+
     stp_a_id: str
     stp_z_id: str
 
