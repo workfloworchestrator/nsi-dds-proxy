@@ -3,7 +3,8 @@ name = "dds-proxy"
 version = "0.1.0.dev1"
 description = "REST proxy for the NSI Document Distribution Service."
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 keywords = ["NSI", "DDS", "NML", "network"]
 authors = [
     {name = "Hans Trompert", email = "hans.trompert@surf.nl"},
