@@ -1,0 +1,43 @@
+[project]
+name = "dds-proxy"
+version = "0.1.0.dev1"
+description = "REST proxy for the NSI Document Distribution Service."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+keywords = ["NSI", "DDS", "NML", "network"]
+authors = [
+    {name = "Hans Trompert", email = "hans.trompert@surf.nl"},
+]
+maintainers = [
+    {name = "Hans Trompert", email = "hans.trompert@surf.nl"},
+]
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.135.1",
+    "httpx==0.28.1",
+    "lxml==6.0.2",
+    "pydantic-settings==2.13.1",
+    "structlog==25.5.0",
+    "uvicorn==0.41.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourorg/nsi-dds-proxy"
+Issues = "https://github.com/yourorg/nsi-dds-proxy/issues"
+
+[project.scripts]
+dds-proxy = "dds_proxy.main:run"
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "httpx==0.28.1",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.uv]
+package = true
