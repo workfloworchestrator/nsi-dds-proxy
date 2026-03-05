@@ -11,7 +11,7 @@ authors = [
 maintainers = [
     {name = "Hans Trompert", email = "hans.trompert@surf.nl"},
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.13"
 dependencies = [
     "fastapi==0.135.1",
     "httpx==0.28.1",
