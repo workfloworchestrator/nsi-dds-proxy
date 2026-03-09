@@ -13,7 +13,7 @@
 #
 from fastapi import APIRouter, HTTPException, Request
 
-from dds_proxy.config import get_settings
+from dds_proxy.config import settings
 from dds_proxy.dds_client import fetch_sdps
 from dds_proxy.models import ServiceDemarcationPoint
 
@@ -23,7 +23,6 @@ router = APIRouter(tags=["service-demarcation-points"])
 @router.get("/service-demarcation-points", response_model=list[ServiceDemarcationPoint])
 async def get_service_demarcation_points(request: Request) -> list[ServiceDemarcationPoint]:
     """Return all SDPs (matched STP pairs) across all DDS topologies."""
-    settings = get_settings()
     try:
         return await fetch_sdps(
             client=request.app.state.http_client,

@@ -15,12 +15,11 @@
 
 import base64
 import gzip
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
 
-from dds_proxy.config import Settings, get_settings
 from dds_proxy.main import app
 
 # ---------------------------------------------------------------------------
@@ -32,64 +31,6 @@ NML_NS = "http://schemas.ogf.org/nml/2013/05/base#"
 ETH_NS = "http://schemas.ogf.org/nml/2012/10/ethernet"
 ALIAS = f"{NML_NS}isAlias"
 TOPO_TYPE = "vnd.ogf.nsi.topology.v2+xml"
-
-# ---------------------------------------------------------------------------
-# Test settings — used to mock get_settings() so no .env file is needed
-# ---------------------------------------------------------------------------
-
-# ---------------------------------------------------------------------------
-# Test settings — created once at session scope with placeholder cert files.
-# The files must exist on disk to satisfy FilePath validation, but their
-# content does not matter because ssl_context.load_cert_chain is never called
-# in tests (the HTTP client is fully mocked).
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def dummy_certs(tmp_path_factory):
-    """Create empty cert and key files that satisfy FilePath validation."""
-    tmp = tmp_path_factory.mktemp("certs")
-    cert = tmp / "client-certificate.pem"
-    key = tmp / "client-private-key.pem"
-    cert.touch()
-    key.touch()
-    return cert, key
-
-
-@pytest.fixture(scope="session")
-def test_settings(dummy_certs):
-    """Build a Settings instance pointing at the dummy cert files."""
-    cert, key = dummy_certs
-    return Settings(
-        dds_base_url="https://dds.example.net/dds",
-        cache_ttl_seconds=60,
-        http_timeout_seconds=30.0,
-        dds_client_cert=str(cert),
-        dds_client_key=str(key),
-    )
-
-
-@pytest.fixture(autouse=True)
-def mock_settings(test_settings):
-    """Patch get_settings() and SSL context creation globally.
-
-    Ensures tests never need a real .env file or valid certificate content.
-    The SSL context is mocked so load_cert_chain() in the lifespan is a no-op.
-    """
-    mock_ssl_context = MagicMock()
-    get_settings.cache_clear()
-    with (
-        patch("dds_proxy.config.get_settings", return_value=test_settings),
-        patch("dds_proxy.main.get_settings", return_value=test_settings),
-        patch("dds_proxy.main.create_default_context", return_value=mock_ssl_context),
-        patch("dds_proxy.dds_client.get_settings", return_value=test_settings),
-        patch("dds_proxy.routers.topologies.get_settings", return_value=test_settings),
-        patch("dds_proxy.routers.switching_services.get_settings", return_value=test_settings),
-        patch("dds_proxy.routers.stps.get_settings", return_value=test_settings),
-        patch("dds_proxy.routers.sdps.get_settings", return_value=test_settings),
-    ):
-        yield
-    get_settings.cache_clear()
 
 
 # ---------------------------------------------------------------------------

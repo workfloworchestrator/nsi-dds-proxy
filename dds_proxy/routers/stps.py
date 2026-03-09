@@ -13,7 +13,7 @@
 #
 from fastapi import APIRouter, HTTPException, Request
 
-from dds_proxy.config import get_settings
+from dds_proxy.config import settings
 from dds_proxy.dds_client import fetch_stps
 from dds_proxy.models import ServiceTerminationPoint
 
@@ -23,7 +23,6 @@ router = APIRouter(tags=["service-termination-points"])
 @router.get("/service-termination-points", response_model=list[ServiceTerminationPoint])
 async def get_service_termination_points(request: Request) -> list[ServiceTerminationPoint]:
     """Return all STPs attached to switching services across all DDS topologies."""
-    settings = get_settings()
     try:
         return await fetch_stps(
             client=request.app.state.http_client,

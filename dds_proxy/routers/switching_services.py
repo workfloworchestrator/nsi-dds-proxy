@@ -13,7 +13,7 @@
 #
 from fastapi import APIRouter, HTTPException, Request
 
-from dds_proxy.config import get_settings
+from dds_proxy.config import settings
 from dds_proxy.dds_client import fetch_switching_services
 from dds_proxy.models import SwitchingService
 
@@ -23,7 +23,6 @@ router = APIRouter(tags=["switching-services"])
 @router.get("/switching-services", response_model=list[SwitchingService])
 async def get_switching_services(request: Request) -> list[SwitchingService]:
     """Return all switching services found across all DDS topologies."""
-    settings = get_settings()
     try:
         return await fetch_switching_services(
             client=request.app.state.http_client,

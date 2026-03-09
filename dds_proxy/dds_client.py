@@ -26,7 +26,7 @@ import httpx
 import structlog
 from lxml import etree
 
-from dds_proxy.config import get_settings
+from dds_proxy.config import settings
 from dds_proxy.models import (
     Lifetime,
     ServiceDemarcationPoint,
@@ -67,7 +67,7 @@ def _cache_get(key: str) -> TopologyDocuments | None:
     if key not in _cache:
         return None
     ts, data = _cache[key]
-    ttl = get_settings().cache_ttl_seconds
+    ttl = settings.cache_ttl_seconds
     age = time.monotonic() - ts
     if age > ttl:
         log.debug("cache.expired", key=key, age_seconds=round(age, 1), ttl=ttl)

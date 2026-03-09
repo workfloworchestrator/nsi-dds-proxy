@@ -13,6 +13,7 @@
 #
 import importlib
 import platform
+import ssl
 from contextlib import asynccontextmanager
 from ssl import create_default_context
 from typing import AsyncIterator
@@ -21,7 +22,7 @@ import httpx
 import structlog
 from fastapi import FastAPI
 
-from dds_proxy.config import get_settings
+from dds_proxy.config import settings
 from dds_proxy.routers import sdps, stps, switching_services, topologies
 
 # ---------------------------------------------------------------------------
@@ -38,7 +39,6 @@ def configure_logging() -> None:
     """
     import logging
 
-    settings = get_settings()
     numeric_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
     # Shared pre-processing steps applied to every log record regardless of origin.
@@ -123,7 +123,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         node=node,
     )
 
-    settings = get_settings()
     log.info(
         "Application settings",
         dds_base_url=settings.dds_base_url,
@@ -136,16 +135,25 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log_level=settings.log_level.upper(),
     )
 
-    ssl_context = create_default_context()
-    ssl_context.load_cert_chain(
-        certfile=settings.dds_client_cert,
-        keyfile=settings.dds_client_key,
-    )
-
+    ssl_context: ssl.SSLContext | str | bool
+    if (
+        settings.dds_client_cert
+        and settings.dds_client_key
+        and settings.dds_client_cert.is_file()
+        and settings.dds_client_key.is_file()
+    ):
+        ssl_context = create_default_context()
+        ssl_context.load_cert_chain(
+            certfile=settings.dds_client_cert,
+            keyfile=settings.dds_client_key,
+        )
+    else:
+        ssl_context = False
     app.state.http_client = httpx.AsyncClient(
         verify=ssl_context,
         timeout=settings.http_timeout_seconds,
     )
+
     yield
 
     await app.state.http_client.aclose()
@@ -193,7 +201,6 @@ def run() -> None:
     """Start the uvicorn server using host and port from settings."""
     import uvicorn
 
-    settings = get_settings()
     uvicorn.run(
         "dds_proxy.main:app", host=settings.dds_proxy_host, port=settings.dds_proxy_port, reload=False, log_config=None
     )

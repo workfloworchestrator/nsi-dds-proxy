@@ -13,7 +13,7 @@
 #
 from fastapi import APIRouter, HTTPException, Request
 
-from dds_proxy.config import get_settings
+from dds_proxy.config import settings
 from dds_proxy.dds_client import fetch_topologies
 from dds_proxy.models import Topology
 
@@ -23,7 +23,6 @@ router = APIRouter(tags=["topologies"])
 @router.get("/topologies", response_model=list[Topology])
 async def get_topologies(request: Request) -> list[Topology]:
     """Return all topologies found in the DDS."""
-    settings = get_settings()
     try:
         return await fetch_topologies(
             client=request.app.state.http_client,
