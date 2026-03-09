@@ -11,6 +11,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import importlib
+import platform
 from contextlib import asynccontextmanager
 from ssl import create_default_context
 from typing import AsyncIterator
@@ -105,12 +107,30 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
     log = structlog.get_logger(__name__)
 
+    application_version = importlib.metadata.version("dds-proxy")
+    python_version = platform.python_version()
+    python_implementation = platform.python_implementation()
+    node = platform.node()
+    log.info(
+        "Starting dds-proxy %s using Python %s (%s) on %s",
+        application_version,
+        python_version,
+        python_implementation,
+        node,
+        application_version=application_version,
+        python_version=python_version,
+        python_implementation=python_implementation,
+        node=node,
+    )
+
     settings = get_settings()
     log.info(
-        "app.starting",
+        "Application settings",
         dds_base_url=settings.dds_base_url,
         cache_ttl=settings.cache_ttl_seconds,
-        cert=settings.dds_client_cert,
+        http_timeout_seconds=settings.http_timeout_seconds,
+        dds_client_cert=str(settings.dds_client_cert),
+        dds_client_key=str(settings.dds_client_key),
         host=settings.dds_proxy_host,
         port=settings.dds_proxy_port,
         log_level=settings.log_level.upper(),
@@ -126,11 +146,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         verify=ssl_context,
         timeout=settings.http_timeout_seconds,
     )
-    log.info("app.http_client.ready")
     yield
 
     await app.state.http_client.aclose()
-    log.info("app.shutdown")
+    log.info("Application shutdown")
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +163,7 @@ app = FastAPI(
         "Returns topologies, switching services, STPs, and SDPs "
         "extracted from DDS topology documents."
     ),
-    version="0.1.0",
+    version=importlib.metadata.version("dds-proxy"),
     lifespan=lifespan,
 )
 
