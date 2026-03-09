@@ -70,16 +70,16 @@ def _cache_get(key: str) -> TopologyDocuments | None:
     ttl = settings.cache_ttl_seconds
     age = time.monotonic() - ts
     if age > ttl:
-        log.debug("cache.expired", key=key, age_seconds=round(age, 1), ttl=ttl)
+        log.debug("Cache expired", key=key, age_seconds=round(age, 1), ttl=ttl)
         del _cache[key]
         return None
-    log.debug("cache.hit", key=key, age_seconds=round(age, 1), ttl=ttl)
+    log.debug("Cache hit", key=key, age_seconds=round(age, 1), ttl=ttl)
     return data
 
 
 def _cache_set(key: str, data: TopologyDocuments) -> None:
     _cache[key] = (time.monotonic(), data)
-    log.debug("cache.set", key=key)
+    log.debug("Cache set", key=key)
 
 
 # ---------------------------------------------------------------------------
@@ -89,10 +89,10 @@ def _cache_set(key: str, data: TopologyDocuments) -> None:
 
 async def _fetch_collection(client: httpx.AsyncClient, dds_base_url: str) -> etree._Element:
     url = f"{dds_base_url.rstrip('/')}/documents"
-    log.info("dds.collection.fetching", url=url)
+    log.debug("Fetch DDS collection", url=url)
     response = await client.get(url)
     response.raise_for_status()
-    log.info("dds.collection.fetched", url=url, status=response.status_code, bytes=len(response.content))
+    log.debug("DDS collection fetched", url=url, status=response.status_code, bytes=len(response.content))
     return etree.fromstring(response.content)
 
 
@@ -108,12 +108,12 @@ async def _get_topology_documents(
 ) -> list[tuple[etree._Element, etree._Element]]:
     cached = _cache_get("topology_documents")
     if cached is not None:
-        log.debug("dds.topology_documents.from_cache", count=len(cached))
+        log.debug("DDS topology documents from cache", count=len(cached))
         return cached
 
     collection = await _fetch_collection(client, dds_base_url)
     all_docs = collection.findall(".//dds:document", NS)
-    log.info("dds.collection.parsed", total_documents=len(all_docs))
+    log.debug("DDS collection parsed", total_documents=len(all_docs))
 
     results = []
     for doc_el in all_docs:
@@ -121,41 +121,41 @@ async def _get_topology_documents(
         type_el = doc_el.find("type")
 
         if type_el is None:
-            log.debug("dds.document.skipped", doc_id=doc_id, reason="no type element")
+            log.debug("DDS document skipped", doc_id=doc_id, reason="no type element")
             continue
 
         doc_type = type_el.text.strip()
         if doc_type != TOPOLOGY_CONTENT_TYPE:
-            log.debug("dds.document.skipped", doc_id=doc_id, type=doc_type, reason="not a topology document")
+            log.debug("DDS document skipped", doc_id=doc_id, type=doc_type, reason="not a topology document")
             continue
 
-        log.info("dds.document.processing", doc_id=doc_id)
+        log.debug("DDS document processing", doc_id=doc_id)
 
         content_el = doc_el.find("content")
         if content_el is None or not content_el.text:
             href = doc_el.get("href")
-            log.info("dds.document.no_inline_content", doc_id=doc_id, href=href)
+            log.debug("DDS document no inline content", doc_id=doc_id, href=href)
             if href:
                 try:
                     resp = await client.get(href)
                     resp.raise_for_status()
                     nml_root = etree.fromstring(resp.content)
                     results.append((doc_el, nml_root))
-                    log.info("dds.document.fetched_by_href", doc_id=doc_id, status=resp.status_code)
+                    log.debug("DDS document fetched by href", doc_id=doc_id, status=resp.status_code)
                 except Exception as exc:
-                    log.warning("dds.document.href_fetch_failed", doc_id=doc_id, href=href, error=str(exc))
+                    log.warning("DDS document href fetch failed", doc_id=doc_id, href=href, error=str(exc))
             continue
 
         try:
             nml_root = _decode_topology_content(content_el)
             tag = etree.QName(nml_root.tag).localname
             nml_id = nml_root.get("id", "<no id>")
-            log.info("dds.document.decoded", doc_id=doc_id, nml_root_tag=tag, nml_id=nml_id)
+            log.debug("DDS document decoded", doc_id=doc_id, nml_root_tag=tag, nml_id=nml_id)
             results.append((doc_el, nml_root))
         except Exception as exc:
-            log.warning("dds.document.decode_failed", doc_id=doc_id, error=str(exc))
+            log.warning("DDS document decode failed", doc_id=doc_id, error=str(exc))
 
-    log.info("dds.topology_documents.ready", count=len(results))
+    log.debug("DDS topology documents ready", count=len(results))
     _cache_set("topology_documents", results)
     return results
 
@@ -170,7 +170,7 @@ async def fetch_topologies(
     dds_base_url: str,
 ) -> list[Topology]:
     """Fetch topologies from DDS."""
-    log.info("fetch.topologies.start")
+    log.debug("fetch topologies start")
     docs = await _get_topology_documents(client, dds_base_url)
     topologies = []
 
@@ -186,11 +186,11 @@ async def fetch_topologies(
             start = lifetime_el.findtext("nml:start", default="", namespaces=NS)
             end = lifetime_el.findtext("nml:end", default="", namespaces=NS)
         else:
-            log.debug("fetch.topologies.no_lifetime_element", topo_id=topo_id, fallback="using dds version/expires")
+            log.debug("fetch topologies no lifetime element", topo_id=topo_id, fallback="using dds version/expires")
             start = dds_doc.get("version", "")
             end = dds_doc.get("expires", "")
 
-        log.debug("fetch.topologies.parsed", topo_id=topo_id, name=name, version=version)
+        log.debug("fetch topologies parsed", topo_id=topo_id, name=name, version=version)
         topologies.append(
             Topology(
                 id=topo_id,
@@ -200,7 +200,7 @@ async def fetch_topologies(
             )
         )
 
-    log.info("fetch.topologies.done", count=len(topologies))
+    log.debug("Fetch topologies done", count=len(topologies))
     return topologies
 
 
@@ -209,21 +209,21 @@ async def fetch_switching_services(
     dds_base_url: str,
 ) -> list[SwitchingService]:
     """Fetch switching services from DDS."""
-    log.info("fetch.switching_services.start")
+    log.debug("Fetch switching services start")
     docs = await _get_topology_documents(client, dds_base_url)
     services = []
 
     for dds_doc, nml_root in docs:
         topology_id = dds_doc.get("id") or nml_root.get("id", "")
         ss_els = nml_root.findall(".//nml:SwitchingService", NS)
-        log.debug("fetch.switching_services.scanning", topology_id=topology_id, found=len(ss_els))
+        log.debug("Fetch switching services scanning", topology_id=topology_id, found=len(ss_els))
 
         for ss_el in ss_els:
             ss_id = ss_el.get("id", "")
             encoding = ss_el.get("encoding", "")
             label_swapping = ss_el.get("labelSwapping", "false").lower() == "true"
             label_type = ss_el.get("labelType", "")
-            log.debug("fetch.switching_services.parsed", ss_id=ss_id, encoding=encoding, label_swapping=label_swapping)
+            log.debug("Fetch switching services parsed", ss_id=ss_id, encoding=encoding, label_swapping=label_swapping)
 
             services.append(
                 SwitchingService(
@@ -235,7 +235,7 @@ async def fetch_switching_services(
                 )
             )
 
-    log.info("fetch.switching_services.done", count=len(services))
+    log.debug("Fetch switching services done", count=len(services))
     return services
 
 
@@ -250,7 +250,7 @@ async def fetch_stps(
     PortGroup (id = port_id + inbound_suffix) inside the hasInboundPort Relation.
     The SwitchingService id is found via the hasService Relation.
     """
-    log.info("fetch.stps.start")
+    log.debug("Fetch stps start")
     docs = await _get_topology_documents(client, dds_base_url)
     stps = []
 
@@ -266,7 +266,7 @@ async def fetch_stps(
                     if pg_id:
                         inbound_ports[pg_id] = pg_el
 
-        log.debug("fetch.stps.inbound_ports", topo_id=topo_id, count=len(inbound_ports))
+        log.debug("Fetch stps inbound ports", topo_id=topo_id, count=len(inbound_ports))
 
         # Find the SwitchingService id via hasService Relation
         ss_id = ""
@@ -277,11 +277,11 @@ async def fetch_stps(
                     ss_id = ss_el.get("id", "")
                     break
 
-        log.debug("fetch.stps.switching_service", topo_id=topo_id, ss_id=ss_id)
+        log.debug("Fetch stps switching service", topo_id=topo_id, ss_id=ss_id)
 
         # Each direct BidirectionalPort child of Topology is an STP
         bidir_ports = nml_root.findall("nml:BidirectionalPort", NS)
-        log.debug("fetch.stps.bidirectional_ports", topo_id=topo_id, count=len(bidir_ports))
+        log.debug("fetch stps bidirectional ports", topo_id=topo_id, count=len(bidir_ports))
 
         for port_el in bidir_ports:
             port_id = port_el.get("id", "")
@@ -301,7 +301,7 @@ async def fetch_stps(
                 ref_id = pg_ref.get("id", "")
                 if ref_id in inbound_ports:
                     pg_el = inbound_ports[ref_id]
-                    log.debug("fetch.stps.inbound_portgroup_matched", port_id=port_id, pg_id=ref_id)
+                    log.debug("Fetch stps inbound portgroup matched", port_id=port_id, pg_id=ref_id)
                     break
 
             if pg_el is not None:
@@ -310,16 +310,16 @@ async def fetch_stps(
                     try:
                         capacity = int(cap_el.text.strip())
                     except ValueError:
-                        log.warning("fetch.stps.invalid_capacity", port_id=port_id, raw=cap_el.text)
+                        log.warning("Fetch stps invalid capacity", port_id=port_id, raw=cap_el.text)
 
                 lg_el = pg_el.find("nml:LabelGroup", NS)
                 if lg_el is not None and lg_el.text:
                     label_group = lg_el.text.strip()
             else:
-                log.debug("fetch.stps.no_inbound_portgroup", port_id=port_id)
+                log.debug("Fetch stps no inbound portgroup", port_id=port_id)
 
             log.debug(
-                "fetch.stps.parsed", port_id=port_id, name=name, capacity=capacity, label_group=label_group, ss_id=ss_id
+                "Fetch stps parsed", port_id=port_id, name=name, capacity=capacity, label_group=label_group, ss_id=ss_id
             )
             stps.append(
                 ServiceTerminationPoint(
@@ -331,7 +331,7 @@ async def fetch_stps(
                 )
             )
 
-    log.info("fetch.stps.done", count=len(stps))
+    log.debug("Fetch stps done", count=len(stps))
     return stps
 
 
@@ -346,7 +346,7 @@ async def fetch_sdps(
     PortGroup id back to its parent BidirectionalPort id so we don't have to
     make any assumptions about naming conventions.
     """
-    log.info("fetch.sdps.start")
+    log.debug("FetchD sdps start")
     docs = await _get_topology_documents(client, dds_base_url)
     sdps = []
 
@@ -366,7 +366,7 @@ async def fetch_sdps(
                 if pg_id:
                     pg_to_stp[pg_id] = stp_id
 
-    log.debug("fetch.sdps.pg_to_stp_map", total_entries=len(pg_to_stp))
+    log.debug("Fetch sdps pg to stp map", total_entries=len(pg_to_stp))
 
     # Collect all declared alias pairs (stp_a, stp_z) across all topologies.
     # A pair only becomes an SDP when both directions are declared.
@@ -383,7 +383,7 @@ async def fetch_sdps(
                 pg_id = pg_el.get("id", "")
                 stp_a_id = pg_to_stp.get(pg_id)
                 if not stp_a_id:
-                    log.debug("fetch.sdps.local_pg_unresolved", pg_id=pg_id, topo_id=topo_id)
+                    log.debug("Fetch sdps local pg unresolved", pg_id=pg_id, topo_id=topo_id)
                     continue
 
                 for alias_rel in pg_el.findall("nml:Relation", NS):
@@ -397,25 +397,25 @@ async def fetch_sdps(
 
                         stp_z_id = pg_to_stp.get(alias_pg_id)
                         if not stp_z_id:
-                            log.debug("fetch.sdps.remote_pg_unresolved", alias_pg_id=alias_pg_id, stp_a_id=stp_a_id)
+                            log.debug("Fetch sdps remote pg unresolved", alias_pg_id=alias_pg_id, stp_a_id=stp_a_id)
                             continue
 
                         declared.add((stp_a_id, stp_z_id))
 
-    log.debug("fetch.sdps.declared_pairs", count=len(declared))
+    log.debug("Fetch sdps declared pairs", count=len(declared))
 
     # Only emit an SDP when both (A→Z) and (Z→A) are declared.
     seen: set[tuple[str, str]] = set()
     for stp_a_id, stp_z_id in declared:
         if (stp_z_id, stp_a_id) not in declared:
-            log.debug("fetch.sdps.one_sided", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
+            log.debug("Fetch sdps one sided", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
             continue
 
         pair = (stp_a_id, stp_z_id)
         reverse = (stp_z_id, stp_a_id)
         if pair not in seen and reverse not in seen:
             seen.add(pair)
-            log.debug("fetch.sdps.parsed", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
+            log.debug("Fetch sdps parsed", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
             sdps.append(
                 ServiceDemarcationPoint(
                     stp_a_id=stp_a_id,
@@ -423,5 +423,5 @@ async def fetch_sdps(
                 )
             )
 
-    log.info("fetch.sdps.done", count=len(sdps))
+    log.debug("Fetch sdps done", count=len(sdps))
     return sdps
