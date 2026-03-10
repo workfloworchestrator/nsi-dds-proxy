@@ -235,8 +235,7 @@ Get a list of STP attached to all switching services found in all topologies.
 
 ### GET /service-demarcation-points
 
-Get a list of SDP consisting of matching STP attached to all switching services
-found in all topologies.
+Get a list of SDPs. Each SDP consists of a pair of matching STP attached to any switching service found in all topologies.
 
 ```json
 [
