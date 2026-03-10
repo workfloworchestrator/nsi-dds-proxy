@@ -170,8 +170,6 @@ spec:
       targetPort: 8000
 ```
 
-Once running, the API is available at `http://localhost:8000` and a health check endpoint at `http://localhost:8000/health`.
-
 ## API Endpoints
 
 ### GET /topologies
@@ -226,8 +224,8 @@ Get a list of STP attached to all switching services found in all topologies.
     "id": "urn:ogf:network:example.domain.toplevel:2020:topology:ps1",
     "name": "perfSONAR node 1",
     "capacity": 400000,
-    "LabelGroup": "2100-2400,3100-3400",
-    "SwitchingServiceId": "urn:ogf:network:example.domain.toplevel:2020:topology:switch:EVTS.ANA"
+    "labelGroup": "2100-2400,3100-3400",
+    "switchingServiceId": "urn:ogf:network:example.domain.toplevel:2020:topology:switch:EVTS.ANA"
   },
   ...
 ]
@@ -240,8 +238,8 @@ Get a list of SDPs. Each SDP consists of a pair of matching STP attached to any 
 ```json
 [
   {
-    "StpAId": "urn:ogf:network:example.domain.toplevel:2020:topology:ps1",
-    "StpZId": "urn:ogf:network:another.domain.toplevel:1999:topology:data-center-3"
+    "stpAId": "urn:ogf:network:example.domain.toplevel:2020:topology:ps1",
+    "stpZId": "urn:ogf:network:another.domain.toplevel:1999:topology:data-center-3"
   },
   ...
 ]

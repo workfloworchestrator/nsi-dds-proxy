@@ -63,8 +63,8 @@ class ServiceTerminationPoint(BaseModel):
     model_config = {
         "populate_by_name": True,
         "alias_generator": lambda field: {
-            "label_group": "LabelGroup",
-            "switching_service_id": "SwitchingServiceId",
+            "label_group": "labelGroup",
+            "switching_service_id": "switchingServiceId",
         }.get(field, field),
     }
 
@@ -78,7 +78,7 @@ class ServiceDemarcationPoint(BaseModel):
     model_config = {
         "populate_by_name": True,
         "alias_generator": lambda field: {
-            "stp_a_id": "StpAId",
-            "stp_z_id": "StpZId",
+            "stp_a_id": "stpAId",
+            "stp_z_id": "stpZId",
         }.get(field, field),
     }

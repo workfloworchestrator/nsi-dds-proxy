@@ -82,11 +82,11 @@ class TestServiceTerminationPoint:
         assert stp.capacity == 100000
         assert stp.label_group == "100-200"
 
-    def test_serialises_with_pascal_aliases(self):
+    def test_serialises_with_camel_aliases(self):
         stp = ServiceTerminationPoint(id="x", name="n", capacity=0, label_group="lg", switching_service_id="ssid")
         data = stp.model_dump(by_alias=True)
-        assert "LabelGroup" in data
-        assert "SwitchingServiceId" in data
+        assert "labelGroup" in data
+        assert "switchingServiceId" in data
 
 
 class TestServiceDemarcationPoint:
@@ -97,8 +97,8 @@ class TestServiceDemarcationPoint:
         )
         assert sdp.stp_a_id == "urn:ogf:network:example.net:2020:topology:port-1"
 
-    def test_serialises_with_pascal_aliases(self):
+    def test_serialises_with_camel_aliases(self):
         sdp = ServiceDemarcationPoint(stp_a_id="a", stp_z_id="z")
         data = sdp.model_dump(by_alias=True)
-        assert data["StpAId"] == "a"
-        assert data["StpZId"] == "z"
+        assert data["stpAId"] == "a"
+        assert data["stpZId"] == "z"

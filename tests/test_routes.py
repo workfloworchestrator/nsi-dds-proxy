@@ -179,8 +179,8 @@ class TestSTPsRoute:
         stp = next(s for s in stps if s["id"] == PORT_A)
         assert stp["name"] == "Port One"
         assert stp["capacity"] == 100000
-        assert stp["LabelGroup"] == "100-200"
-        assert stp["SwitchingServiceId"] == SS_ID
+        assert stp["labelGroup"] == "100-200"
+        assert stp["switchingServiceId"] == SS_ID
 
     def test_502_on_dds_failure(self, api):
         client, mock_http = api
@@ -207,7 +207,7 @@ class TestSDPsRoute:
     def test_sdp_fields(self, api):
         client, _ = api
         sdps = client.get("/service-demarcation-points").json()
-        stp_pairs = {(s["StpAId"], s["StpZId"]) for s in sdps}
+        stp_pairs = {(s["stpAId"], s["stpZId"]) for s in sdps}
         assert (PORT_A, PORT_Z) in stp_pairs or (PORT_Z, PORT_A) in stp_pairs
 
     def test_empty_when_no_aliases(self, api):
