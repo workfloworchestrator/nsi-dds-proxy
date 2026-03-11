@@ -26,6 +26,9 @@ dependencies = [
 Homepage = "https://github.com/yourorg/nsi-dds-proxy"
 Issues = "https://github.com/yourorg/nsi-dds-proxy/issues"
 
+[tool.setuptools.packages.find]
+include = ["dds_proxy*"]
+
 [project.scripts]
 dds-proxy = "dds_proxy.main:run"
 
