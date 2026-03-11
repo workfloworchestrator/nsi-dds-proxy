@@ -96,7 +96,7 @@ def configure_logging() -> None:
     # probes from load balancers and k8s do not appear in the logs at all.
     class _SuppressHealthCheck(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
-            return ' /health ' not in record.getMessage()
+            return " /health " not in record.getMessage()
 
     access_logger = logging.getLogger("uvicorn.access")
     access_logger.filters.clear()
@@ -225,6 +225,4 @@ def run() -> None:
     # loggers.
     configure_logging()
 
-    uvicorn.run(
-        app, host=settings.dds_proxy_host, port=settings.dds_proxy_port, reload=False, log_config=None
-    )
+    uvicorn.run(app, host=settings.dds_proxy_host, port=settings.dds_proxy_port, reload=False, log_config=None)

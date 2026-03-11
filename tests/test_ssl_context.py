@@ -22,13 +22,11 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
-
 import pytest
 from fastapi.testclient import TestClient
 
 from dds_proxy.config import Settings
 from dds_proxy.main import app
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -41,12 +39,12 @@ def make_settings(**kwargs) -> Settings:
     Any keyword argument overrides the corresponding field. File-path fields
     default to None so callers only need to supply what they care about.
     """
-    defaults = dict(
-        dds_base_url="https://dds.example.net/dds",
-        dds_client_cert=None,
-        dds_client_key=None,
-        dds_ca_bundle=None,
-    )
+    defaults = {
+        "dds_base_url": "https://dds.example.net/dds",
+        "dds_client_cert": None,
+        "dds_client_key": None,
+        "dds_ca_bundle": None,
+    }
     defaults.update(kwargs)
     return Settings.model_construct(**defaults)
 
@@ -90,8 +88,11 @@ def cert_files(tmp_path):
 
 class TestSslContextWithCaBundle:
     def test_load_verify_locations_called_with_ca_bundle(self, cert_files):
-        """When DDS_CA_BUNDLE is set and exists, load_verify_locations is called
-        with the bundle path and load_default_certs is not called."""
+        """Test that load_verify_locations is called with CA bundle.
+
+        When DDS_CA_BUNDLE is set and exists, load_verify_locations is called
+        with the bundle path and load_default_certs is not called.
+        """
         cert, key, ca = cert_files
         settings = make_settings(dds_client_cert=cert, dds_client_key=key, dds_ca_bundle=ca)
 
