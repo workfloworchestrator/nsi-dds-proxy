@@ -175,6 +175,56 @@ spec:
       targetPort: 8000
 ```
 
+### With Helm chart
+
+Using the same secret as above, and the `values.yaml` as below, add an `ingress` if needed,
+and install with:
+
+```shell
+helm upgrade --install --namespace development --values values.yaml nsi-dds-proxy chart
+```
+
+```yaml
+image:
+  pullPolicy: IfNotPresent
+  repository: ghcr.io/workfloworchestrator/nsi-dds-proxy
+  tag: latest
+env:
+  CACHE_TTL_SECONDS: '60'
+  DDS_BASE_URL: https://dds.your.domain/dds
+  DDS_CA_BUNDLE: /certs/ca-bundle.pem
+  DDS_CLIENT_CERT: /certs/client-certificate.pem
+  DDS_CLIENT_KEY: /certs/client-private-key.pem
+  DDS_PROXY_HOST: 0.0.0.0
+  DDS_PROXY_PORT: '8000'
+  HTTP_TIMEOUT_SECONDS: '30.0'
+  LOG_LEVEL: INFO
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+readinessProbe:
+  httpGet:
+    path: /health
+    port: 8000
+resources:
+  limits:
+    cpu: 1000m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+volumeMounts:
+  - mountPath: /certs
+    name: certs
+    readOnly: true
+volumes:
+  - name: certs
+    secret:
+      optional: false
+      secretName: dds-proxy-certs
+```
+
 ## API Endpoints
 
 ### GET /topologies
