@@ -156,6 +156,11 @@ class TestSwitchingServicesRoute:
         ss = client.get("/switching-services").json()[0]
         assert ss["topologyId"] == TOPO_ID
 
+    def test_502_on_dds_failure(self, api):
+        client, mock_http = api
+        mock_http.get.side_effect = Exception("upstream error")
+        assert client.get("/switching-services").status_code == 502
+
 
 # ---------------------------------------------------------------------------
 # GET /service-termination-points

@@ -17,12 +17,17 @@ These tests exercise the XML parsing logic directly, bypassing HTTP by
 injecting pre-built NML documents into _get_topology_documents.
 """
 
+import base64
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from dds_proxy import dds_client
+from dds_proxy.config import settings
 from tests.conftest import (
+    DDS_NS,
+    ETH_NS,
+    NML_NS,
     PORT_A,
     PORT_Z,
     PORT_Z_IN,
@@ -46,6 +51,111 @@ def make_mock_http(content: bytes) -> AsyncMock:
     mock_response.raise_for_status = lambda: None
     mock_http.get = AsyncMock(return_value=mock_response)
     return mock_http
+
+
+# ---------------------------------------------------------------------------
+# _get_topology_documents
+# ---------------------------------------------------------------------------
+
+
+class TestGetTopologyDocuments:
+    @pytest.mark.asyncio
+    async def test_document_without_type_element_is_skipped(self):
+        """A DDS document that has no <type> child element is silently skipped."""
+        no_type_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<ns0:collection xmlns:ns0="{DDS_NS}">
+  <ns0:documents>
+    <ns0:document id="{TOPO_ID}" version="2026-01-01T00:00:00Z" xmlns:ns0="{DDS_NS}">
+    </ns0:document>
+  </ns0:documents>
+</ns0:collection>""".encode()
+        client = make_mock_http(no_type_xml)
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_corrupt_inline_content_is_skipped(self):
+        """A document whose base64/gzip content is corrupt is silently skipped."""
+        corrupt_content = base64.b64encode(b"this is not gzip data").decode()
+        corrupt_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<ns0:collection xmlns:ns0="{DDS_NS}">
+  <ns0:documents>
+    <ns0:document id="{TOPO_ID}" version="2026-01-01T00:00:00Z" xmlns:ns0="{DDS_NS}">
+      <type>vnd.ogf.nsi.topology.v2+xml</type>
+      <content contentType="application/x-gzip" contentTransferEncoding="base64">{corrupt_content}</content>
+    </ns0:document>
+  </ns0:documents>
+</ns0:collection>""".encode()
+        client = make_mock_http(corrupt_xml)
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_href_fetch_success(self):
+        """A document without inline content is fetched from its href attribute."""
+        nml = make_nml_topology(topo_id=TOPO_ID, name="Href Topology")
+        href_url = "https://dds.example.net/dds/nml/topo"
+        collection_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<ns0:collection xmlns:ns0="{DDS_NS}">
+  <ns0:documents>
+    <ns0:document
+        id="{TOPO_ID}"
+        href="{href_url}"
+        version="2026-01-01T00:00:00Z"
+        expires="2026-12-31T00:00:00Z"
+        xmlns:ns0="{DDS_NS}">
+      <type>vnd.ogf.nsi.topology.v2+xml</type>
+    </ns0:document>
+  </ns0:documents>
+</ns0:collection>""".encode()
+
+        collection_resp = AsyncMock()
+        collection_resp.content = collection_xml
+        collection_resp.raise_for_status = lambda: None
+
+        href_resp = AsyncMock()
+        href_resp.content = nml
+        href_resp.raise_for_status = lambda: None
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(side_effect=[collection_resp, href_resp])
+
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_topologies(mock_http, "https://dds.example.net/dds")
+        assert len(result) == 1
+        assert result[0].id == TOPO_ID
+        assert mock_http.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_href_fetch_failure_is_skipped(self):
+        """A document whose href fetch raises an exception is silently skipped."""
+        href_url = "https://dds.example.net/dds/nml/topo"
+        collection_xml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<ns0:collection xmlns:ns0="{DDS_NS}">
+  <ns0:documents>
+    <ns0:document
+        id="{TOPO_ID}"
+        href="{href_url}"
+        version="2026-01-01T00:00:00Z"
+        expires="2026-12-31T00:00:00Z"
+        xmlns:ns0="{DDS_NS}">
+      <type>vnd.ogf.nsi.topology.v2+xml</type>
+    </ns0:document>
+  </ns0:documents>
+</ns0:collection>""".encode()
+
+        collection_resp = AsyncMock()
+        collection_resp.content = collection_xml
+        collection_resp.raise_for_status = lambda: None
+
+        mock_http = AsyncMock()
+        mock_http.get = AsyncMock(side_effect=[collection_resp, Exception("connection refused")])
+
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_topologies(mock_http, "https://dds.example.net/dds")
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +211,29 @@ class TestFetchTopologies:
         with patch.dict(dds_client._cache, {}, clear=True):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result == []
+
+    @pytest.mark.asyncio
+    async def test_lifetime_fallback_from_dds_attributes(self):
+        """When the NML document has no <nml:Lifetime>, version and expires from the DDS document are used."""
+        nml_no_lifetime = f"""<?xml version="1.0" encoding="UTF-8"?>
+<nml:Topology
+    id="{TOPO_ID}"
+    name="No Lifetime Topology"
+    xmlns:nml="{NML_NS}"
+    xmlns:eth="{ETH_NS}">
+</nml:Topology>""".encode("utf-8")
+        collection = make_dds_collection([{
+            "id": TOPO_ID,
+            "nml_bytes": nml_no_lifetime,
+            "version": "2025-06-01T00:00:00Z",
+            "expires": "2026-06-01T00:00:00Z",
+        }])
+        client = make_mock_http(collection)
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
+        assert len(result) == 1
+        assert result[0].lifetime.start == "2025-06-01T00:00:00Z"
+        assert result[0].lifetime.end == "2026-06-01T00:00:00Z"
 
     @pytest.mark.asyncio
     async def test_nsa_documents_are_skipped(self):
@@ -230,6 +363,45 @@ class TestFetchSTPs:
         assert result[0].switching_service_id == SS_ID
 
     @pytest.mark.asyncio
+    async def test_invalid_capacity_defaults_to_zero(self):
+        """A non-integer <eth:capacity> value is caught and the STP gets capacity=0."""
+        nml = make_nml_topology(
+            ports=[{"id": PORT_A, "name": "Port A", "capacity": "not-a-number", "label_group": "100-200"}]
+        )
+        collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
+        client = make_mock_http(collection)
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
+        assert len(result) == 1
+        assert result[0].capacity == 0
+
+    @pytest.mark.asyncio
+    async def test_port_with_no_inbound_portgroup_defaults(self):
+        """An STP whose BidirectionalPort has no PortGroup children gets capacity=0 and label_group=''."""
+        nml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<nml:Topology
+    id="{TOPO_ID}"
+    name="Test"
+    xmlns:nml="{NML_NS}"
+    xmlns:eth="{ETH_NS}">
+  <nml:Lifetime xmlns:nml="{NML_NS}">
+    <nml:start xmlns:nml="{NML_NS}">2025-01-01T00:00:00Z</nml:start>
+    <nml:end xmlns:nml="{NML_NS}">2026-01-01T00:00:00Z</nml:end>
+  </nml:Lifetime>
+  <nml:BidirectionalPort id="{PORT_A}" xmlns:nml="{NML_NS}">
+    <nml:name xmlns:nml="{NML_NS}">Port A</nml:name>
+  </nml:BidirectionalPort>
+</nml:Topology>""".encode("utf-8")
+        collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
+        client = make_mock_http(collection)
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
+        assert len(result) == 1
+        assert result[0].id == PORT_A
+        assert result[0].capacity == 0
+        assert result[0].label_group == ""
+
+    @pytest.mark.asyncio
     async def test_multiple_ports(self):
         port_b = f"{TOPO_ID}:port-2"
         nml = make_nml_topology(
@@ -292,6 +464,44 @@ class TestFetchSDPs:
         assert result == []
 
     @pytest.mark.asyncio
+    async def test_unresolved_local_pg_is_skipped(self):
+        """A PortGroup in hasInboundPort that has no parent BidirectionalPort is silently skipped."""
+        # The hasInboundPort relation contains a PortGroup, but there is no BidirectionalPort
+        # in the topology, so pg_to_stp is empty and the lookup returns None.
+        nml = f"""<?xml version="1.0" encoding="UTF-8"?>
+<nml:Topology
+    id="{TOPO_ID}"
+    name="Test"
+    xmlns:nml="{NML_NS}"
+    xmlns:eth="{ETH_NS}">
+  <nml:Relation type="http://schemas.ogf.org/nml/2013/05/base#hasInboundPort" xmlns:nml="{NML_NS}">
+    <nml:PortGroup id="{PORT_A}:in" xmlns:nml="{NML_NS}">
+      <nml:Relation type="http://schemas.ogf.org/nml/2013/05/base#isAlias" xmlns:nml="{NML_NS}">
+        <nml:PortGroup id="{PORT_Z}:in" xmlns:nml="{NML_NS}"/>
+      </nml:Relation>
+    </nml:PortGroup>
+  </nml:Relation>
+</nml:Topology>""".encode("utf-8")
+        collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
+        client = make_mock_http(collection)
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_unresolved_alias_pg_is_skipped(self):
+        """An alias PortGroup that belongs to no known BidirectionalPort is silently skipped."""
+        orphan_pg_id = "urn:ogf:network:unknown.net:1999:topology:port-orphan:in"
+        nml = make_nml_topology(
+            ports=[{"id": PORT_A, "name": "A", "capacity": 0, "label_group": "", "alias_pg_id": orphan_pg_id}]
+        )
+        collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
+        client = make_mock_http(collection)
+        with patch.dict(dds_client._cache, {}, clear=True):
+            result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_multiple_aliases(self):
         port_b = f"{TOPO_ID}:port-2"
         port_b_in = f"{port_b}:in"
@@ -337,6 +547,19 @@ class TestCaching:
             await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         # Only one real HTTP call should have been made
         assert client.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_expired_cache_triggers_refetch(self):
+        """After the TTL elapses, the cached entry is discarded and a fresh HTTP request is made."""
+        client = make_mock_http(SIMPLE_COLLECTION)
+        start = 1000.0
+        with patch.dict(dds_client._cache, {}, clear=True):
+            with patch("dds_proxy.dds_client.time.monotonic", return_value=start):
+                await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
+            expired = start + settings.cache_ttl_seconds + 1
+            with patch("dds_proxy.dds_client.time.monotonic", return_value=expired):
+                await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
+        assert client.get.call_count == 2
 
     @pytest.mark.asyncio
     async def test_cache_shared_across_fetch_functions(self):
