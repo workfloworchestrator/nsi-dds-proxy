@@ -1,6 +1,6 @@
 [project]
 name = "dds-proxy"
-version = "0.1.0.dev1"
+version = "0.1.0"
 description = "REST proxy for the NSI Document Distribution Service."
 readme = "README.md"
 license = "Apache-2.0"
