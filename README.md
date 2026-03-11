@@ -17,9 +17,10 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 
 | Variable | Default | Description |
 |---|---|---|
-| `DDS_BASE_URL` | `https://dds.nsi.anaeng.global/dds` | Base URL of the upstream DDS server. |
-| `DDS_CLIENT_CERT` | `client-certificate.pem` | Path to the PEM-encoded client certificate used for mutual TLS with the DDS server. |
-| `DDS_CLIENT_KEY` | `client-private-key.pem` | Path to the PEM-encoded private key corresponding to the client certificate. |
+| `DDS_BASE_URL` | `https://your-dds-server/dds` | Base URL of the upstream DDS server. |
+| `DDS_CLIENT_CERT` | _(unset)_ | Path to the PEM-encoded client certificate used for mutual TLS with the DDS server. |
+| `DDS_CLIENT_KEY` | _(unset)_ | Path to the PEM-encoded private key corresponding to the client certificate. |
+| `DDS_CA_BUNDLE` | _(unset)_ | Path to a PEM file containing the CA certificates used to verify the DDS server. When set, replaces the system CA store entirely. |
 | `CACHE_TTL_SECONDS` | `60` | How long (in seconds) the DDS response is cached before the next upstream fetch. |
 | `HTTP_TIMEOUT_SECONDS` | `30.0` | Timeout (in seconds) for HTTP requests to the DDS server. |
 | `LOG_LEVEL` | `INFO` | Logging verbosity. Accepted values: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
@@ -90,6 +91,7 @@ docker run --rm \
   -v /path/to/your/certs:/certs:ro \
   -e DDS_CLIENT_CERT=/certs/client-certificate.pem \
   -e DDS_CLIENT_KEY=/certs/client-private-key.pem \
+  -e DDS_CA_BUNDLE=/certs/ca-bundle.pem \
   -e DDS_BASE_URL=https://your-dds-server/dds \
   ghcr.io/workfloworchestrator/nsi-dds-proxy:0.1.0
 ```
@@ -117,7 +119,8 @@ Store your client certificate and key in a Secret, then reference them in a Depl
 ```bash
 kubectl create secret generic dds-proxy-certs \
   --from-file=client-certificate.pem=/path/to/client-certificate.pem \
-  --from-file=client-private-key.pem=/path/to/client-private-key.pem
+  --from-file=client-private-key.pem=/path/to/client-private-key.pem \
+  --from-file=ca-bundle.pem=/path/to/ca-bundle.pem
 ```
 
 ```yaml
@@ -149,6 +152,8 @@ spec:
               value: "/certs/client-certificate.pem"
             - name: DDS_CLIENT_KEY
               value: "/certs/client-private-key.pem"
+            - name: DDS_CA_BUNDLE
+              value: "/certs/ca-bundle.pem"
           volumeMounts:
             - name: certs
               mountPath: /certs
@@ -233,7 +238,8 @@ Get a list of STP attached to all switching services found in all topologies.
 
 ### GET /service-demarcation-points
 
-Get a list of SDPs. Each SDP consists of a pair of matching STP attached to any switching service found in all topologies.
+Get a list of SDPs. Each SDP consists of a pair of matching STP attached to any
+switching service found in all topologies.
 
 ```json
 [

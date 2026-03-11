@@ -15,7 +15,6 @@ import importlib
 import platform
 import ssl
 from contextlib import asynccontextmanager
-from ssl import create_default_context
 from typing import AsyncIterator
 
 import httpx
@@ -130,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         http_timeout_seconds=settings.http_timeout_seconds,
         dds_client_cert=str(settings.dds_client_cert),
         dds_client_key=str(settings.dds_client_key),
+        dds_ca_bundle=str(settings.dds_ca_bundle),
         host=settings.dds_proxy_host,
         port=settings.dds_proxy_port,
         log_level=settings.log_level.upper(),
@@ -142,7 +142,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         and settings.dds_client_cert.is_file()
         and settings.dds_client_key.is_file()
     ):
-        ssl_context = create_default_context()
+        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ssl_context.verify_mode = ssl.CERT_REQUIRED
+        ssl_context.check_hostname = True
+        if settings.dds_ca_bundle and settings.dds_ca_bundle.is_file():
+            ssl_context.load_verify_locations(cafile=settings.dds_ca_bundle)
+        else:
+            ssl_context.load_default_certs()
         ssl_context.load_cert_chain(
             certfile=settings.dds_client_cert,
             keyfile=settings.dds_client_key,

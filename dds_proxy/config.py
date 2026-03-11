@@ -24,11 +24,12 @@ class Settings(BaseSettings):
     existing files at startup.
     """
 
-    dds_base_url: str = "https://dds.nsi.anaeng.global/dds"
+    dds_base_url: str = "https://your-dds-server/dds"
     cache_ttl_seconds: int = 60
     http_timeout_seconds: float = 30.0
     dds_client_cert: Path | None = None
     dds_client_key: Path | None = None
+    dds_ca_bundle: Path | None = None
     log_level: str = "INFO"
     dds_proxy_host: str = "localhost"
     dds_proxy_port: int = 8000
