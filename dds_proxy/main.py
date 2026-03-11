@@ -12,6 +12,7 @@
 # limitations under the License.
 #
 import importlib
+import logging
 import platform
 import ssl
 from contextlib import asynccontextmanager
@@ -35,9 +36,12 @@ def configure_logging() -> None:
     Both structlog-native loggers and foreign stdlib loggers (e.g. uvicorn) are
     routed through a structlog ``ProcessorFormatter``, ensuring consistent
     formatting across all log sources. The log level is read from settings.
-    """
-    import logging
 
+    Access log records for ``/health`` are suppressed entirely via a
+    ``logging.Filter`` attached to the ``uvicorn.access`` logger so that
+    frequent liveness probes from load balancers and k8s do not appear in the
+    logs at all.
+    """
     numeric_level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
     # Shared pre-processing steps applied to every log record regardless of origin.
@@ -88,6 +92,16 @@ def configure_logging() -> None:
         uvi_logger.handlers.clear()
         uvi_logger.propagate = True
 
+    # Suppress /health access log records entirely so that frequent liveness
+    # probes from load balancers and k8s do not appear in the logs at all.
+    class _SuppressHealthCheck(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return ' /health ' not in record.getMessage()
+
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.filters.clear()
+    access_logger.addFilter(_SuppressHealthCheck())
+
 
 # ---------------------------------------------------------------------------
 # Lifespan
@@ -103,7 +117,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     attached to ``app.state.http_client``.
     On shutdown: closes the HTTP client gracefully.
     """
-    configure_logging()
     log = structlog.get_logger(__name__)
 
     application_version = importlib.metadata.version("dds-proxy")
@@ -207,6 +220,11 @@ def run() -> None:
     """Start the uvicorn server using host and port from settings."""
     import uvicorn
 
+    # Configure logging before uvicorn starts so that the _SuppressHealthCheck
+    # filter is attached to uvicorn.access before uvicorn initialises its
+    # loggers.
+    configure_logging()
+
     uvicorn.run(
-        "dds_proxy.main:app", host=settings.dds_proxy_host, port=settings.dds_proxy_port, reload=False, log_config=None
+        app, host=settings.dds_proxy_host, port=settings.dds_proxy_port, reload=False, log_config=None
     )

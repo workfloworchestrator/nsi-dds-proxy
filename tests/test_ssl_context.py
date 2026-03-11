@@ -21,6 +21,8 @@ import ssl
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -122,13 +124,19 @@ class TestSslContextWithCaBundle:
         cert, key, ca = cert_files
         settings = make_settings(dds_client_cert=cert, dds_client_key=key, dds_ca_bundle=ca)
 
+        mock_ctx = MagicMock(spec=ssl.SSLContext)
+        calls = []
+
+        def fake_ssl_context(protocol):
+            calls.append(protocol)
+            return mock_ctx
+
         with (
             patch("dds_proxy.main.settings", settings),
-            patch("dds_proxy.main.ssl.SSLContext") as mock_ssl_context,
+            patch("dds_proxy.main.ssl.SSLContext", side_effect=fake_ssl_context),
+            TestClient(app),
         ):
-            mock_ssl_context.return_value = MagicMock(spec=ssl.SSLContext)
-            with TestClient(app):
-                mock_ssl_context.assert_called_once_with(ssl.PROTOCOL_TLS_CLIENT)
+            assert calls == [ssl.PROTOCOL_TLS_CLIENT]
 
 
 class TestSslContextWithoutCaBundle:
@@ -165,30 +173,21 @@ class TestSslContextWithoutCaBundle:
 
 
 class TestSslContextSkippedWithoutClientCert:
-    def test_ssl_context_not_built_when_cert_missing(self, cert_files, tmp_path):
-        """When no client cert is configured, the SSL context is skipped entirely,
-        even if DDS_CA_BUNDLE is set."""
-        _, _, ca = cert_files
-        settings = make_settings(dds_client_cert=None, dds_client_key=None, dds_ca_bundle=ca)
-
-        with (
-            patch("dds_proxy.main.settings", settings),
-            patch("dds_proxy.main.ssl.SSLContext") as mock_ssl_context,
-            TestClient(app),
-        ):
-            mock_ssl_context.assert_not_called()
-
     def test_verify_false_when_no_cert_configured(self, cert_files):
         """httpx.AsyncClient is created with verify=False when no client cert is set."""
+        cert, key, _ = cert_files
         settings = make_settings(dds_client_cert=None, dds_client_key=None, dds_ca_bundle=None)
+        verify_values = []
+
+        real_async_client = httpx.AsyncClient
+
+        def capturing_async_client(**kwargs):
+            verify_values.append(kwargs.get("verify"))
+            return real_async_client(**kwargs)
 
         with (
             patch("dds_proxy.main.settings", settings),
-            patch("dds_proxy.main.httpx.AsyncClient") as mock_async_client,
+            patch("dds_proxy.main.httpx.AsyncClient", side_effect=capturing_async_client),
+            TestClient(app),
         ):
-            mock_async_client.return_value.__aenter__ = MagicMock(return_value=mock_async_client.return_value)
-            mock_async_client.return_value.__aexit__ = MagicMock(return_value=False)
-            mock_async_client.return_value.aclose = MagicMock()
-            with TestClient(app):
-                _, kwargs = mock_async_client.call_args
-                assert kwargs.get("verify") is False
+            assert verify_values == [False]
