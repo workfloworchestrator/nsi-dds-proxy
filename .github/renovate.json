@@ -8,9 +8,7 @@
   },
   "packageRules": [
     {
-      "matchManagers": ["pep621"],
-      "matchFileNames": ["pyproject.toml"],
-      "enabled": true,
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true
     }
   ]
