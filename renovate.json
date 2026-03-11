@@ -11,7 +11,7 @@
       "matchManagers": ["pep621"],
       "matchFileNames": ["pyproject.toml"],
       "enabled": true,
-      "automerge": true,
+      "automerge": true
     }
-  ],
+  ]
 }
