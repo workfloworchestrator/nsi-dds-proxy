@@ -222,12 +222,16 @@ class TestFetchTopologies:
     xmlns:nml="{NML_NS}"
     xmlns:eth="{ETH_NS}">
 </nml:Topology>""".encode("utf-8")
-        collection = make_dds_collection([{
-            "id": TOPO_ID,
-            "nml_bytes": nml_no_lifetime,
-            "version": "2025-06-01T00:00:00Z",
-            "expires": "2026-06-01T00:00:00Z",
-        }])
+        collection = make_dds_collection(
+            [
+                {
+                    "id": TOPO_ID,
+                    "nml_bytes": nml_no_lifetime,
+                    "version": "2025-06-01T00:00:00Z",
+                    "expires": "2026-06-01T00:00:00Z",
+                }
+            ]
+        )
         client = make_mock_http(collection)
         with patch.dict(dds_client._cache, {}, clear=True):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
