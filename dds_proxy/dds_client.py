@@ -97,7 +97,7 @@ async def _fetch_collection(client: httpx.AsyncClient, dds_base_url: str) -> etr
 
 
 def _decode_topology_content(content_el: etree._Element) -> etree._Element:
-    raw = base64.b64decode(content_el.text.strip())
+    raw = base64.b64decode((content_el.text or "").strip())
     xml_bytes = gzip.decompress(raw)
     return etree.fromstring(xml_bytes)
 
@@ -124,7 +124,7 @@ async def _get_topology_documents(
             log.debug("DDS document skipped", doc_id=doc_id, reason="no type element")
             continue
 
-        doc_type = type_el.text.strip()
+        doc_type = (type_el.text or "").strip()
         if doc_type != TOPOLOGY_CONTENT_TYPE:
             log.debug("DDS document skipped", doc_id=doc_id, type=doc_type, reason="not a topology document")
             continue
@@ -175,11 +175,11 @@ async def fetch_topologies(
     topologies = []
 
     for dds_doc, nml_root in docs:
-        topo_id = dds_doc.get("id") or nml_root.get("id", "")
+        topo_id = dds_doc.get("id") or nml_root.get("id") or ""
         version = dds_doc.get("version", "")
         name_attr = nml_root.get("name", "")
         name_el = nml_root.find("nml:name", NS)
-        name = name_attr or (name_el.text.strip() if name_el is not None and name_el.text else topo_id)
+        name = name_attr or (name_el.text.strip() if name_el is not None and name_el.text else "") or topo_id
 
         lifetime_el = nml_root.find("nml:Lifetime", NS)
         if lifetime_el is not None:
@@ -214,7 +214,7 @@ async def fetch_switching_services(
     services = []
 
     for dds_doc, nml_root in docs:
-        topology_id = dds_doc.get("id") or nml_root.get("id", "")
+        topology_id = dds_doc.get("id") or nml_root.get("id") or ""
         ss_els = nml_root.findall(".//nml:SwitchingService", NS)
         log.debug("Fetch switching services scanning", topology_id=topology_id, found=len(ss_els))
 
@@ -261,10 +261,10 @@ async def fetch_stps(
         inbound_ports: dict[str, etree._Element] = {}
         for rel_el in nml_root.findall("nml:Relation", NS):
             if rel_el.get("type") == HAS_INBOUND_PORT:
-                for pg_el in rel_el.findall("nml:PortGroup", NS):
-                    pg_id = pg_el.get("id", "")
+                for pg_item in rel_el.findall("nml:PortGroup", NS):
+                    pg_id = pg_item.get("id", "")
                     if pg_id:
-                        inbound_ports[pg_id] = pg_el
+                        inbound_ports[pg_id] = pg_item
 
         log.debug("Fetch stps inbound ports", topo_id=topo_id, count=len(inbound_ports))
 
@@ -295,7 +295,7 @@ async def fetch_stps(
             # matches an entry in inbound_ports — avoids assuming a :in suffix
             capacity = 0
             label_group = ""
-            pg_el = None
+            pg_el: etree._Element | None = None
 
             for pg_ref in port_el.findall("nml:PortGroup", NS):
                 ref_id = pg_ref.get("id", "")
