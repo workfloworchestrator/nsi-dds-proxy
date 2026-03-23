@@ -6,6 +6,25 @@ demarcation points from the combined topology documents found on the DDS.  The
 information returned is a subset as needed by NSI ultimate Requester Agents
 like the NSI Orchestrator, SENSE, and others.
 
+## Project ANA-GRAM
+
+This software is being developed by the 
+[Advanced North-Atlantic Consortium](https://www.anaeng.global/), 
+a cooperation between National Education and Research Networks (NRENs) and 
+research partners to provide network connectivity for research and education 
+across the North-Atlantic, as part of the ANA-GRAM project. 
+
+The goal of the ANA-GRAM project is to federate the ANA trans-Atlantic links through
+[Network Service Interface (NSI)](https://ogf.org/documents/GFD.237.pdf)-based automation.
+This will enable the automated provisioning of L2 circuits spanning different domains 
+between research parties on other sides of the Atlantic. The ANA-GRAM project is 
+spearheaded by the ANA Platform & Requirements Working Group, under guidance of the 
+ANA Engineering and ANA Planning Groups.  
+
+<p align="center" width="50%">
+    <img width="50%" src="/artwork/ana-logo-scaled-ab2.png">
+</p>
+
 ## Prerequisites
 
 - A valid client certificate and private key for mutual TLS authentication with the DDS server.
