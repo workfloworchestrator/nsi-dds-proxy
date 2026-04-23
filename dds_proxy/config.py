@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     dds_proxy_host: str = "localhost"
     dds_proxy_port: int = 8000
+    root_path: str = ""
 
     model_config = SettingsConfigDict(env_file="dds_proxy.env", env_file_encoding="utf-8")
 

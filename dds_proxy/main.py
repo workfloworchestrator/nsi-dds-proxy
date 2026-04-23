@@ -192,6 +192,7 @@ app = FastAPI(
     ),
     version=importlib.metadata.version("dds-proxy"),
     lifespan=lifespan,
+    root_path=settings.root_path,
 )
 
 app.include_router(topologies.router)

@@ -44,6 +44,7 @@ dds-proxy
 
 - Fully async (httpx + FastAPI), stateless with no database
 - Mutual TLS for DDS communication (client cert + custom CA bundle)
+- `root_path` setting for serving behind a path-stripping reverse proxy (e.g. the nsi-mgmt-info portal)
 - XML parsing uses 4 NML/DDS namespaces defined in `dds_client.py`
 - All responses are full collections (no filtering/pagination)
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`

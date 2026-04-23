@@ -73,6 +73,7 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 | `LOG_LEVEL` | `INFO` | Logging verbosity. Accepted values: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 | `DDS_PROXY_HOST` | `localhost` | Interface the server binds to. Set to `0.0.0.0` to accept connections on all interfaces. |
 | `DDS_PROXY_PORT` | `8000` | TCP port the server listens on. |
+| `ROOT_PATH` | _(empty)_ | ASGI root path prefix. Set when serving behind a reverse proxy that strips a path prefix (e.g. `/dds-proxy`). Ensures Swagger UI loads the OpenAPI spec from the correct URL. Does not affect route matching. |
 
 A ready-to-use template is provided in `dds_proxy.env`. The application automatically reads this file from the working directory when it starts, so in most cases you only need to edit it in place.
 
