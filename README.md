@@ -93,7 +93,7 @@ Token validation is **opportunistic**: when enabled, JWTs are validated if a `Be
 | `OIDC_JWKS_CACHE_LIFESPAN` | `300` | JWKS key cache TTL in seconds. |
 | `OIDC_USERINFO_CACHE_TTL` | `60` | Userinfo response cache TTL in seconds. |
 
-The proxy validates the `Authorization: Bearer` header (ID token) for signature, issuer, audience, and expiry. For group-based authorization, it calls the OIDC userinfo endpoint using the access token from the `X-Auth-Request-Access-Token` header (set by oauth2-proxy).
+The proxy validates a JWT for signature, issuer, audience, and expiry. It first checks the `Authorization: Bearer` header; if absent, it falls back to the `X-Auth-Request-Access-Token` header (set by oauth2-proxy with `--pass-access-token`). The fallback is needed because the nginx ingress controller has a [known issue](https://github.com/kubernetes/ingress-nginx/issues/13163) where it clears the `Authorization` header from auth subrequest responses. For group-based authorization, it calls the OIDC userinfo endpoint using the access token from `X-Auth-Request-Access-Token`.
 
 A ready-to-use template is provided in `dds_proxy.env`. The application automatically reads this file from the working directory when it starts, so in most cases you only need to edit it in place.
 

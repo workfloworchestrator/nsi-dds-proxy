@@ -130,14 +130,17 @@ async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
     for name, value in request.headers.items():
         log.debug("Request header", path=path, header=name, value=value)
     auth_header = request.headers.get("Authorization", "")
+    token = auth_header.removeprefix(_BEARER_PREFIX).strip() if auth_header.startswith(_BEARER_PREFIX) else ""
 
-    if not auth_header.startswith(_BEARER_PREFIX):
-        log.info("No bearer token, allowing passthrough", path=path)
-        return None
+    if token:
+        log.info("Using token from Authorization header", path=path)
+    else:
+        token = request.headers.get("X-Auth-Request-Access-Token", "").strip()
+        if token:
+            log.info("Using access token from X-Auth-Request-Access-Token header", path=path)
 
-    token = auth_header.removeprefix(_BEARER_PREFIX).strip()
     if not token:
-        log.info("Empty bearer token, allowing passthrough", path=path)
+        log.info("No bearer token, allowing passthrough", path=path)
         return None
 
     oidc_provider: OIDCProvider = request.app.state.oidc_provider

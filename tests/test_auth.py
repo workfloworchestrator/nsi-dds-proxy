@@ -163,9 +163,16 @@ class TestTokenExtraction:
 
 
 class TestSignatureValidation:
-    def test_valid_token_returns_200(self, auth_api, make_token):
+    @pytest.mark.parametrize(
+        "headers_factory",
+        [
+            pytest.param(lambda t: {"Authorization": f"Bearer {t}"}, id="authorization-header"),
+            pytest.param(lambda t: {"X-Auth-Request-Access-Token": t}, id="access-token-header"),
+        ],
+    )
+    def test_valid_token_returns_200(self, auth_api, make_token, headers_factory):
         client, _ = auth_api
-        resp = client.get("/topologies", headers={"Authorization": f"Bearer {make_token()}"})
+        resp = client.get("/topologies", headers=headers_factory(make_token()))
         assert resp.status_code == 200
 
     def test_tampered_token_returns_401(self, auth_api, mock_oidc_provider):
