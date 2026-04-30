@@ -35,7 +35,8 @@ TEST_JWKS_URI = "https://idp.example.org/.well-known/jwks.json"
 TEST_USERINFO_URI = "https://idp.example.org/userinfo"
 
 _BASE_OIDC_PATCHES: dict[str, Any] = {
-    "oidc_enabled": True,
+    "auth_enabled": True,
+    "mtls_header": "",
     "oidc_issuer": TEST_ISSUER,
     "oidc_audience": TEST_AUDIENCE,
     "oidc_jwks_uri": TEST_JWKS_URI,
@@ -149,12 +150,13 @@ class TestTokenExtraction:
             pytest.param("Bearer ", id="bearer-no-token"),
         ],
     )
-    def test_no_bearer_token_passes_through(self, auth_api, auth_header):
-        """Requests without a valid Bearer token are allowed through (mTLS ingress path)."""
+    def test_no_bearer_token_rejected_when_auth_enabled(self, auth_api, auth_header):
+        """Requests without credentials are rejected when auth is enabled."""
         client, _ = auth_api
         headers = {"Authorization": auth_header} if auth_header is not None else {}
         resp = client.get("/topologies", headers=headers)
-        assert resp.status_code == 200
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Authentication required"
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +303,98 @@ class TestGroupAuthorization:
         client.get("/topologies", headers=headers)
         client.get("/topologies", headers=headers)
         assert mock_provider.fetch_userinfo.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# mTLS verification tests
+# ---------------------------------------------------------------------------
+
+
+class TestMTLSVerification:
+    def test_mtls_header_present_returns_200(self, mock_oidc_provider):
+        """Request with mTLS header (no JWT) is allowed."""
+        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method", "oidc_issuer": ""}
+        mock_http = AsyncMock()
+        mock_response = AsyncMock()
+        mock_response.content = SIMPLE_COLLECTION
+        mock_response.raise_for_status = lambda: None
+        mock_http.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch.multiple("dds_proxy.auth.settings", **patches),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.http_client = mock_http
+            app.state.oidc_provider = None
+            app.state.oidc_http_client = None
+            resp = client.get("/topologies", headers={"X-Auth-Method": "mTLS", "X-Client-DN": "CN=Test"})
+            assert resp.status_code == 200
+
+    def test_no_mtls_header_no_jwt_returns_401(self, mock_oidc_provider):
+        """Request without any credentials is rejected when auth is enabled."""
+        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method", "oidc_issuer": ""}
+        mock_http = AsyncMock()
+        mock_response = AsyncMock()
+        mock_response.content = SIMPLE_COLLECTION
+        mock_response.raise_for_status = lambda: None
+        mock_http.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch.multiple("dds_proxy.auth.settings", **patches),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.http_client = mock_http
+            app.state.oidc_provider = None
+            app.state.oidc_http_client = None
+            resp = client.get("/topologies")
+            assert resp.status_code == 401
+            assert resp.json()["detail"] == "Authentication required"
+
+    def test_jwt_valid_no_mtls_header_returns_200(self, mock_oidc_provider, make_token):
+        """Valid JWT succeeds even without mTLS header configured."""
+        with _patched_auth_client(mock_oidc_provider) as (client, _):
+            resp = client.get("/topologies", headers={"Authorization": f"Bearer {make_token()}"})
+            assert resp.status_code == 200
+
+    def test_mtls_and_oidc_both_configured_jwt_wins(self, mock_oidc_provider, make_token):
+        """When both methods are configured, valid JWT takes the OIDC path."""
+        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method"}
+        mock_http = AsyncMock()
+        mock_response = AsyncMock()
+        mock_response.content = SIMPLE_COLLECTION
+        mock_response.raise_for_status = lambda: None
+        mock_http.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch.multiple("dds_proxy.auth.settings", **patches),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.http_client = mock_http
+            app.state.oidc_provider = mock_oidc_provider
+            app.state.oidc_http_client = AsyncMock()
+            resp = client.get("/topologies", headers={"Authorization": f"Bearer {make_token()}"})
+            assert resp.status_code == 200
+            mock_oidc_provider.get_signing_key.assert_called_once()
+
+    def test_mtls_fallback_when_no_jwt(self, mock_oidc_provider):
+        """When both methods are configured and no JWT present, mTLS header is checked."""
+        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method"}
+        mock_http = AsyncMock()
+        mock_response = AsyncMock()
+        mock_response.content = SIMPLE_COLLECTION
+        mock_response.raise_for_status = lambda: None
+        mock_http.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch.multiple("dds_proxy.auth.settings", **patches),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.http_client = mock_http
+            app.state.oidc_provider = mock_oidc_provider
+            app.state.oidc_http_client = AsyncMock()
+            resp = client.get("/topologies", headers={"X-Auth-Method": "mTLS", "X-Client-DN": "CN=Test"})
+            assert resp.status_code == 200
+            mock_oidc_provider.get_signing_key.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

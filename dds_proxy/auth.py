@@ -126,66 +126,85 @@ def check_groups(
 
 
 async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
-    """FastAPI dependency that validates the JWT and optionally checks group membership."""
-    if not settings.oidc_enabled:
+    """FastAPI dependency that validates the JWT and optionally checks group membership.
+
+    When ``auth_enabled`` is ``False``, all requests pass through.
+    When ``True``, the request must be authenticated via OIDC (JWT) or mTLS
+    (header set by the auth service). If neither succeeds, the request is rejected.
+    """
+    if not settings.auth_enabled:
         return None
 
     path = request.url.path
-    auth_header = request.headers.get("Authorization", "")
-    token = auth_header.removeprefix(_BEARER_PREFIX).strip() if auth_header.startswith(_BEARER_PREFIX) else ""
 
-    if token:
-        log.info("Using token from Authorization header", path=path)
-    else:
-        token = request.headers.get("X-Auth-Request-Access-Token", "").strip()
+    # --- OIDC path ---
+    if settings.oidc_issuer:
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.removeprefix(_BEARER_PREFIX).strip() if auth_header.startswith(_BEARER_PREFIX) else ""
+
         if token:
-            log.info("Using access token from X-Auth-Request-Access-Token header", path=path)
+            log.info("Using token from Authorization header", path=path)
+        else:
+            token = request.headers.get("X-Auth-Request-Access-Token", "").strip()
+            if token:
+                log.info("Using access token from X-Auth-Request-Access-Token header", path=path)
 
-    if not token:
-        log.info("No bearer token, allowing passthrough", path=path)
-        return None
+        if token:
+            oidc_provider: OIDCProvider = request.app.state.oidc_provider
 
-    oidc_provider: OIDCProvider = request.app.state.oidc_provider
+            try:
+                payload = await validate_token(token, oidc_provider)
+            except jwt.ExpiredSignatureError as exc:
+                log.warning("Token expired", path=path, error=str(exc))
+                raise HTTPException(status_code=401, detail="Token expired", headers=_WWW_AUTHENTICATE) from exc
+            except jwt.InvalidAudienceError as exc:
+                log.warning("Invalid audience in token", path=path, error=str(exc))
+                raise HTTPException(status_code=401, detail="Invalid audience", headers=_WWW_AUTHENTICATE) from exc
+            except jwt.InvalidIssuerError as exc:
+                log.warning("Invalid issuer in token", path=path, error=str(exc))
+                raise HTTPException(status_code=401, detail="Invalid issuer", headers=_WWW_AUTHENTICATE) from exc
+            except jwt.PyJWTError as exc:
+                log.warning("Invalid token", path=path, error=str(exc))
+                raise HTTPException(
+                    status_code=401, detail=f"Invalid token: {exc}", headers=_WWW_AUTHENTICATE
+                ) from exc
 
-    try:
-        payload = await validate_token(token, oidc_provider)
-    except jwt.ExpiredSignatureError as exc:
-        log.warning("Token expired", path=path, error=str(exc))
-        raise HTTPException(status_code=401, detail="Token expired", headers=_WWW_AUTHENTICATE) from exc
-    except jwt.InvalidAudienceError as exc:
-        log.warning("Invalid audience in token", path=path, error=str(exc))
-        raise HTTPException(status_code=401, detail="Invalid audience", headers=_WWW_AUTHENTICATE) from exc
-    except jwt.InvalidIssuerError as exc:
-        log.warning("Invalid issuer in token", path=path, error=str(exc))
-        raise HTTPException(status_code=401, detail="Invalid issuer", headers=_WWW_AUTHENTICATE) from exc
-    except jwt.PyJWTError as exc:
-        log.warning("Invalid token", path=path, error=str(exc))
-        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}", headers=_WWW_AUTHENTICATE) from exc
+            sub = payload.get("sub", "unknown")
+            iss = payload.get("iss", "unknown")
+            log.info("Token validated", sub=sub, iss=iss, path=path)
+            log.debug("Token claims", payload=payload)
 
-    sub = payload.get("sub", "unknown")
-    iss = payload.get("iss", "unknown")
-    log.info("Token validated", sub=sub, iss=iss, path=path)
-    log.debug("Token claims", payload=payload)
+            request.state.user = payload
 
-    request.state.user = payload
+            if settings.oidc_required_groups:
+                access_token = request.headers.get("X-Auth-Request-Access-Token", "")
+                if not access_token:
+                    log.warning("Missing access token for group lookup", sub=sub, path=path)
+                    raise HTTPException(
+                        status_code=401, detail="Missing access token for group lookup", headers=_WWW_AUTHENTICATE
+                    )
 
-    if settings.oidc_required_groups:
-        access_token = request.headers.get("X-Auth-Request-Access-Token", "")
-        if not access_token:
-            log.warning("Missing access token for group lookup", sub=sub, path=path)
-            raise HTTPException(
-                status_code=401, detail="Missing access token for group lookup", headers=_WWW_AUTHENTICATE
-            )
+                try:
+                    userinfo = await oidc_provider.fetch_userinfo(access_token)
+                except httpx.HTTPError as exc:
+                    log.error("Userinfo fetch failed", sub=sub, error=str(exc))
+                    raise HTTPException(status_code=502, detail=f"Userinfo fetch failed: {exc}") from exc
 
-        try:
-            userinfo = await oidc_provider.fetch_userinfo(access_token)
-        except httpx.HTTPError as exc:
-            log.error("Userinfo fetch failed", sub=sub, error=str(exc))
-            raise HTTPException(status_code=502, detail=f"Userinfo fetch failed: {exc}") from exc
+                log.debug("Userinfo received", sub=sub, userinfo=userinfo)
+                matched = check_groups(userinfo, settings.oidc_required_groups, settings.oidc_group_claim)
+                email = userinfo.get("email", "unknown")
+                log.info("Group authorization granted", sub=sub, email=email, matched_groups=matched, path=path)
 
-        log.debug("Userinfo received", sub=sub, userinfo=userinfo)
-        matched = check_groups(userinfo, settings.oidc_required_groups, settings.oidc_group_claim)
-        email = userinfo.get("email", "unknown")
-        log.info("Group authorization granted", sub=sub, email=email, matched_groups=matched, path=path)
+            return payload
 
-    return payload
+    # --- mTLS path ---
+    if settings.mtls_header:
+        mtls_value = request.headers.get(settings.mtls_header, "").strip()
+        if mtls_value:
+            client_dn = request.headers.get("X-Client-DN", "unknown")
+            log.info("mTLS authentication verified", client_dn=client_dn, path=path)
+            return None
+
+    # --- Neither succeeded ---
+    log.warning("No valid authentication credentials found", path=path)
+    raise HTTPException(status_code=401, detail="Authentication required", headers=_WWW_AUTHENTICATE)

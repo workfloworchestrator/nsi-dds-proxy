@@ -147,7 +147,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host=settings.dds_proxy_host,
         port=settings.dds_proxy_port,
         log_level=settings.log_level.upper(),
-        oidc_enabled=settings.oidc_enabled,
+        auth_enabled=settings.auth_enabled,
+        mtls_header=settings.mtls_header,
     )
 
     ssl_context: ssl.SSLContext | str | bool
@@ -175,7 +176,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=settings.http_timeout_seconds,
     )
 
-    if settings.oidc_enabled:
+    if settings.auth_enabled and settings.oidc_issuer:
         app.state.oidc_http_client = httpx.AsyncClient()
         jwks_uri = settings.oidc_jwks_uri
         userinfo_uri = settings.oidc_userinfo_uri
@@ -206,7 +207,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         app.state.oidc_provider = None
         app.state.oidc_http_client = None
-        log.info("OIDC authentication disabled")
+
+    if settings.auth_enabled:
+        methods = []
+        if settings.oidc_issuer:
+            methods.append("OIDC")
+        if settings.mtls_header:
+            methods.append(f"mTLS (header: {settings.mtls_header})")
+        log.info("Authentication enabled", methods=methods)
+    else:
+        log.info("Authentication disabled")
 
     yield
 

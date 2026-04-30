@@ -75,16 +75,15 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 | `DDS_PROXY_PORT` | `8000` | TCP port the server listens on. |
 | `ROOT_PATH` | _(empty)_ | ASGI root path prefix. Set when serving behind a reverse proxy that strips a path prefix (e.g. `/dds-proxy`). Ensures Swagger UI loads the OpenAPI spec from the correct URL. Does not affect route matching. |
 
-### OIDC Authentication (optional)
+### Authentication (optional)
 
-When deployed behind an oauth2-proxy or similar OIDC gateway, the DDS Proxy can validate the forwarded JWT and enforce group-based authorization. Authentication is **disabled by default**.
-
-Token validation is **opportunistic**: when enabled, JWTs are validated if a `Bearer` token is present, but requests without one pass through. This allows a single deployment to serve both an mTLS ingress (machine clients without JWTs) and an OIDC ingress (browser users with JWTs from oauth2-proxy). Each ingress enforces its own authentication; the application adds defense-in-depth for the OIDC path.
+The DDS Proxy supports two authentication methods: **OIDC** (JWT from oauth2-proxy) and **mTLS** (header from auth subrequest service). Authentication is **disabled by default**. When enabled, every request to data endpoints must be authenticated via at least one method; requests without valid credentials are rejected with 401.
 
 | Variable | Default | Description |
 |---|---|---|
-| `OIDC_ENABLED` | `false` | Enable JWT validation on all data endpoints. `/health` is always unauthenticated. |
-| `OIDC_ISSUER` | _(empty)_ | Expected `iss` claim in the JWT (e.g. `https://connect.test.surfconext.nl`). |
+| `AUTH_ENABLED` | `false` | Enable authentication on all data endpoints. When `true`, every request must be authenticated via OIDC (JWT) or mTLS (header from auth service). `/health` is always unauthenticated. Replaces the former `OIDC_ENABLED`. |
+| `MTLS_HEADER` | _(empty)_ | Header name that the mTLS auth service sets on successful validation (e.g. `X-Auth-Method`). When set and auth is enabled, the presence of this header counts as mTLS authentication. The auth service also sets `X-Client-DN` with the client certificate DN, which is logged for audit purposes. |
+| `OIDC_ISSUER` | _(empty)_ | Expected `iss` claim in the JWT (e.g. `https://connect.test.surfconext.nl`). OIDC validation is active when this is set and auth is enabled. |
 | `OIDC_AUDIENCE` | _(empty)_ | Expected `aud` claim in the JWT (e.g. `demo.pilot1.sram.surf.nl`). |
 | `OIDC_JWKS_URI` | _(empty)_ | JWKS endpoint URL. Auto-discovered from `{OIDC_ISSUER}/.well-known/openid-configuration` if empty. |
 | `OIDC_USERINFO_URI` | _(empty)_ | Userinfo endpoint URL. Auto-discovered from the OIDC configuration if empty. |
@@ -93,7 +92,13 @@ Token validation is **opportunistic**: when enabled, JWTs are validated if a `Be
 | `OIDC_JWKS_CACHE_LIFESPAN` | `300` | JWKS key cache TTL in seconds. |
 | `OIDC_USERINFO_CACHE_TTL` | `60` | Userinfo response cache TTL in seconds. |
 
-The proxy validates a JWT for signature, issuer, audience, and expiry. It first checks the `Authorization: Bearer` header; if absent, it falls back to the `X-Auth-Request-Access-Token` header (set by oauth2-proxy with `--pass-access-token`). The fallback is needed because the nginx ingress controller has a [known issue](https://github.com/kubernetes/ingress-nginx/issues/13163) where it clears the `Authorization` header from auth subrequest responses. For group-based authorization, it calls the OIDC userinfo endpoint using the access token from `X-Auth-Request-Access-Token`.
+**Authentication flow** when `AUTH_ENABLED=true`:
+
+1. **OIDC path** (if `OIDC_ISSUER` is set): Check for a JWT in the `Authorization: Bearer` header, falling back to `X-Auth-Request-Access-Token` (set by oauth2-proxy). If a token is present, validate it for signature, issuer, audience, and expiry. The `X-Auth-Request-Access-Token` fallback is needed because the nginx ingress controller has a [known issue](https://github.com/kubernetes/ingress-nginx/issues/13163) where it clears the `Authorization` header from auth subrequest responses. If a token is present but invalid, the request is rejected (mTLS does not override a bad JWT).
+2. **mTLS path** (if `MTLS_HEADER` is set): Check for the configured header (e.g. `X-Auth-Method`). This header is set by the mTLS auth subrequest service (nsi-auth) and forwarded by nginx via `auth-response-headers`. The client certificate DN from `X-Client-DN` is logged for audit.
+3. **Neither**: If no valid credentials are found, the request is rejected with 401.
+
+**Defense-in-depth:** The OIDC ingress should strip the `X-Auth-Method` header to prevent clients from spoofing mTLS authentication. With nginx, use `configuration-snippet: proxy_set_header X-Auth-Method "";`. With Traefik, use a Headers middleware with `customRequestHeaders: { X-Auth-Method: "" }`.
 
 A ready-to-use template is provided in `dds_proxy.env`. The application automatically reads this file from the working directory when it starts, so in most cases you only need to edit it in place.
 

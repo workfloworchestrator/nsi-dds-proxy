@@ -37,7 +37,8 @@ class Settings(BaseSettings):
     dds_proxy_port: int = 8000
     root_path: str = ""
 
-    oidc_enabled: bool = False
+    auth_enabled: bool = False
+    mtls_header: str = ""
     oidc_issuer: str = ""
     oidc_audience: str = ""
     oidc_jwks_uri: str = ""
