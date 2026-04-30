@@ -310,45 +310,68 @@ class TestGroupAuthorization:
 # ---------------------------------------------------------------------------
 
 
+def _mtls_only_client(extra_patches: dict[str, Any] | None = None):
+    """Context manager for mTLS-only tests (no OIDC issuer)."""
+    patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method", "oidc_issuer": "", **(extra_patches or {})}
+    mock_http = AsyncMock()
+    mock_response = AsyncMock()
+    mock_response.content = SIMPLE_COLLECTION
+    mock_response.raise_for_status = lambda: None
+    mock_http.get = AsyncMock(return_value=mock_response)
+
+    @contextmanager
+    def _ctx():
+        with (
+            patch.multiple("dds_proxy.auth.settings", **patches),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.http_client = mock_http
+            app.state.oidc_provider = None
+            app.state.oidc_http_client = None
+            yield client
+
+    return _ctx()
+
+
+def _dual_auth_client(mock_oidc_provider: AsyncMock):
+    """Context manager for tests with both OIDC and mTLS configured."""
+    patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method"}
+    mock_http = AsyncMock()
+    mock_response = AsyncMock()
+    mock_response.content = SIMPLE_COLLECTION
+    mock_response.raise_for_status = lambda: None
+    mock_http.get = AsyncMock(return_value=mock_response)
+
+    @contextmanager
+    def _ctx():
+        with (
+            patch.multiple("dds_proxy.auth.settings", **patches),
+            TestClient(app, raise_server_exceptions=False) as client,
+        ):
+            app.state.http_client = mock_http
+            app.state.oidc_provider = mock_oidc_provider
+            app.state.oidc_http_client = AsyncMock()
+            yield client
+
+    return _ctx()
+
+
 class TestMTLSVerification:
-    def test_mtls_header_present_returns_200(self, mock_oidc_provider):
-        """Request with mTLS header (no JWT) is allowed."""
-        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method", "oidc_issuer": ""}
-        mock_http = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.content = SIMPLE_COLLECTION
-        mock_response.raise_for_status = lambda: None
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.multiple("dds_proxy.auth.settings", **patches),
-            TestClient(app, raise_server_exceptions=False) as client,
-        ):
-            app.state.http_client = mock_http
-            app.state.oidc_provider = None
-            app.state.oidc_http_client = None
-            resp = client.get("/topologies", headers={"X-Auth-Method": "mTLS", "X-Client-DN": "CN=Test"})
-            assert resp.status_code == 200
-
-    def test_no_mtls_header_no_jwt_returns_401(self, mock_oidc_provider):
-        """Request without any credentials is rejected when auth is enabled."""
-        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method", "oidc_issuer": ""}
-        mock_http = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.content = SIMPLE_COLLECTION
-        mock_response.raise_for_status = lambda: None
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.multiple("dds_proxy.auth.settings", **patches),
-            TestClient(app, raise_server_exceptions=False) as client,
-        ):
-            app.state.http_client = mock_http
-            app.state.oidc_provider = None
-            app.state.oidc_http_client = None
-            resp = client.get("/topologies")
-            assert resp.status_code == 401
-            assert resp.json()["detail"] == "Authentication required"
+    @pytest.mark.parametrize(
+        "headers,expected_status",
+        [
+            pytest.param({"X-Auth-Method": "mTLS", "X-Client-DN": "CN=Test"}, 200, id="valid-header"),
+            pytest.param({"X-Auth-Method": "mTLS"}, 200, id="valid-header-no-client-dn"),
+            pytest.param({}, 401, id="no-header"),
+            pytest.param({"X-Auth-Method": ""}, 401, id="empty-value"),
+            pytest.param({"X-Auth-Method": "   "}, 401, id="whitespace-value"),
+        ],
+    )
+    def test_mtls_only(self, headers, expected_status):
+        """mTLS-only mode (no OIDC issuer): header presence determines access."""
+        with _mtls_only_client() as client:
+            resp = client.get("/topologies", headers=headers)
+            assert resp.status_code == expected_status
 
     def test_jwt_valid_no_mtls_header_returns_200(self, mock_oidc_provider, make_token):
         """Valid JWT succeeds even without mTLS header configured."""
@@ -358,43 +381,32 @@ class TestMTLSVerification:
 
     def test_mtls_and_oidc_both_configured_jwt_wins(self, mock_oidc_provider, make_token):
         """When both methods are configured, valid JWT takes the OIDC path."""
-        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method"}
-        mock_http = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.content = SIMPLE_COLLECTION
-        mock_response.raise_for_status = lambda: None
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.multiple("dds_proxy.auth.settings", **patches),
-            TestClient(app, raise_server_exceptions=False) as client,
-        ):
-            app.state.http_client = mock_http
-            app.state.oidc_provider = mock_oidc_provider
-            app.state.oidc_http_client = AsyncMock()
+        with _dual_auth_client(mock_oidc_provider) as client:
             resp = client.get("/topologies", headers={"Authorization": f"Bearer {make_token()}"})
             assert resp.status_code == 200
             mock_oidc_provider.get_signing_key.assert_called_once()
 
     def test_mtls_fallback_when_no_jwt(self, mock_oidc_provider):
         """When both methods are configured and no JWT present, mTLS header is checked."""
-        patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method"}
-        mock_http = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.content = SIMPLE_COLLECTION
-        mock_response.raise_for_status = lambda: None
-        mock_http.get = AsyncMock(return_value=mock_response)
-
-        with (
-            patch.multiple("dds_proxy.auth.settings", **patches),
-            TestClient(app, raise_server_exceptions=False) as client,
-        ):
-            app.state.http_client = mock_http
-            app.state.oidc_provider = mock_oidc_provider
-            app.state.oidc_http_client = AsyncMock()
+        with _dual_auth_client(mock_oidc_provider) as client:
             resp = client.get("/topologies", headers={"X-Auth-Method": "mTLS", "X-Client-DN": "CN=Test"})
             assert resp.status_code == 200
             mock_oidc_provider.get_signing_key.assert_not_called()
+
+    def test_invalid_jwt_not_rescued_by_mtls(self, mock_oidc_provider, make_token):
+        """Invalid JWT is rejected even when mTLS header is present."""
+        mock_oidc_provider.get_signing_key.side_effect = pyjwt.PyJWTError("bad signature")
+        with _dual_auth_client(mock_oidc_provider) as client:
+            headers = {"Authorization": "Bearer tampered.jwt.here", "X-Auth-Method": "mTLS"}
+            resp = client.get("/topologies", headers=headers)
+            assert resp.status_code == 401
+
+    def test_no_methods_configured_returns_401(self):
+        """Auth enabled with neither OIDC nor mTLS configured rejects all requests."""
+        with _mtls_only_client(extra_patches={"mtls_header": ""}) as client:
+            resp = client.get("/topologies")
+            assert resp.status_code == 401
+            assert resp.json()["detail"] == "Authentication required"
 
 
 # ---------------------------------------------------------------------------
