@@ -28,6 +28,12 @@ log = structlog.get_logger(__name__)
 
 _BEARER_PREFIX = "Bearer "
 _WWW_AUTHENTICATE = {"WWW-Authenticate": "Bearer"}
+_MAX_USERINFO_CACHE_SIZE = 1024
+_JWT_ERROR_MESSAGES: dict[type[jwt.PyJWTError], str] = {
+    jwt.ExpiredSignatureError: "Token expired",
+    jwt.InvalidAudienceError: "Invalid audience",
+    jwt.InvalidIssuerError: "Invalid issuer",
+}
 
 
 class OIDCProvider:
@@ -84,9 +90,12 @@ class OIDCProvider:
 
     def _evict_expired_cache_entries(self) -> None:
         now = time.monotonic()
-        expired = [k for k, (ts, _) in self._userinfo_cache.items() if (now - ts) >= self._userinfo_cache_ttl]
-        for k in expired:
-            del self._userinfo_cache[k]
+        self._userinfo_cache = {
+            k: (ts, v) for k, (ts, v) in self._userinfo_cache.items() if (now - ts) < self._userinfo_cache_ttl
+        }
+        if len(self._userinfo_cache) > _MAX_USERINFO_CACHE_SIZE:
+            entries = sorted(self._userinfo_cache.items(), key=lambda kv: kv[1][0])
+            self._userinfo_cache = dict(entries[-_MAX_USERINFO_CACHE_SIZE:])
 
 
 async def validate_token(token: str, oidc_provider: OIDCProvider) -> dict[str, Any]:
@@ -140,34 +149,24 @@ async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
     # --- OIDC path ---
     if settings.oidc_issuer:
         auth_header = request.headers.get("Authorization", "")
+        x_access_token = request.headers.get("X-Auth-Request-Access-Token", "").strip()
         token = auth_header.removeprefix(_BEARER_PREFIX).strip() if auth_header.startswith(_BEARER_PREFIX) else ""
 
         if token:
             log.info("Using token from Authorization header", path=path)
-        else:
-            token = request.headers.get("X-Auth-Request-Access-Token", "").strip()
-            if token:
-                log.info("Using access token from X-Auth-Request-Access-Token header", path=path)
+        elif x_access_token:
+            token = x_access_token
+            log.info("Using access token from X-Auth-Request-Access-Token header", path=path)
 
         if token:
             oidc_provider: OIDCProvider = request.app.state.oidc_provider
 
             try:
                 payload = await validate_token(token, oidc_provider)
-            except jwt.ExpiredSignatureError as exc:
-                log.warning("Token expired", path=path, error=str(exc))
-                raise HTTPException(status_code=401, detail="Token expired", headers=_WWW_AUTHENTICATE) from exc
-            except jwt.InvalidAudienceError as exc:
-                log.warning("Invalid audience in token", path=path, error=str(exc))
-                raise HTTPException(status_code=401, detail="Invalid audience", headers=_WWW_AUTHENTICATE) from exc
-            except jwt.InvalidIssuerError as exc:
-                log.warning("Invalid issuer in token", path=path, error=str(exc))
-                raise HTTPException(status_code=401, detail="Invalid issuer", headers=_WWW_AUTHENTICATE) from exc
             except jwt.PyJWTError as exc:
-                log.warning("Invalid token", path=path, error=str(exc))
-                raise HTTPException(
-                    status_code=401, detail=f"Invalid token: {exc}", headers=_WWW_AUTHENTICATE
-                ) from exc
+                detail = _JWT_ERROR_MESSAGES.get(type(exc), f"Invalid token: {exc}")
+                log.warning(detail, path=path, error=str(exc))
+                raise HTTPException(status_code=401, detail=detail, headers=_WWW_AUTHENTICATE) from exc
 
             sub = payload.get("sub", "unknown")
             iss = payload.get("iss", "unknown")
@@ -177,15 +176,14 @@ async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
             request.state.user = payload
 
             if settings.oidc_required_groups:
-                access_token = request.headers.get("X-Auth-Request-Access-Token", "")
-                if not access_token:
+                if not x_access_token:
                     log.warning("Missing access token for group lookup", sub=sub, path=path)
                     raise HTTPException(
                         status_code=401, detail="Missing access token for group lookup", headers=_WWW_AUTHENTICATE
                     )
 
                 try:
-                    userinfo = await oidc_provider.fetch_userinfo(access_token)
+                    userinfo = await oidc_provider.fetch_userinfo(x_access_token)
                 except httpx.HTTPError as exc:
                     log.error("Userinfo fetch failed", sub=sub, error=str(exc))
                     raise HTTPException(status_code=502, detail=f"Userinfo fetch failed: {exc}") from exc

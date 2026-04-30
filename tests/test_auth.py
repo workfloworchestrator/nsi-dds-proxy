@@ -46,6 +46,21 @@ _BASE_OIDC_PATCHES: dict[str, Any] = {
 }
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _mock_dds_http_client() -> AsyncMock:
+    """Create a mock HTTP client that returns the test DDS collection."""
+    mock_http = AsyncMock()
+    mock_response = AsyncMock()
+    mock_response.content = SIMPLE_COLLECTION
+    mock_response.raise_for_status = lambda: None
+    mock_http.get = AsyncMock(return_value=mock_response)
+    return mock_http
+
+
+# ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
@@ -105,11 +120,7 @@ def _patched_auth_client(mock_oidc_provider: AsyncMock, *, required_groups: list
     if required_groups is not None:
         patches["oidc_required_groups"] = required_groups
 
-    mock_http = AsyncMock()
-    mock_response = AsyncMock()
-    mock_response.content = SIMPLE_COLLECTION
-    mock_response.raise_for_status = lambda: None
-    mock_http.get = AsyncMock(return_value=mock_response)
+    mock_http = _mock_dds_http_client()
 
     with (
         patch.multiple("dds_proxy.auth.settings", **patches),
@@ -313,11 +324,7 @@ class TestGroupAuthorization:
 def _mtls_only_client(extra_patches: dict[str, Any] | None = None):
     """Context manager for mTLS-only tests (no OIDC issuer)."""
     patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method", "oidc_issuer": "", **(extra_patches or {})}
-    mock_http = AsyncMock()
-    mock_response = AsyncMock()
-    mock_response.content = SIMPLE_COLLECTION
-    mock_response.raise_for_status = lambda: None
-    mock_http.get = AsyncMock(return_value=mock_response)
+    mock_http = _mock_dds_http_client()
 
     @contextmanager
     def _ctx():
@@ -336,11 +343,7 @@ def _mtls_only_client(extra_patches: dict[str, Any] | None = None):
 def _dual_auth_client(mock_oidc_provider: AsyncMock):
     """Context manager for tests with both OIDC and mTLS configured."""
     patches = {**_BASE_OIDC_PATCHES, "mtls_header": "X-Auth-Method"}
-    mock_http = AsyncMock()
-    mock_response = AsyncMock()
-    mock_response.content = SIMPLE_COLLECTION
-    mock_response.raise_for_status = lambda: None
-    mock_http.get = AsyncMock(return_value=mock_response)
+    mock_http = _mock_dds_http_client()
 
     @contextmanager
     def _ctx():
@@ -416,14 +419,8 @@ class TestMTLSVerification:
 
 class TestAuthDisabled:
     def test_no_auth_required_when_disabled(self):
-        mock_http = AsyncMock()
-        mock_response = AsyncMock()
-        mock_response.content = SIMPLE_COLLECTION
-        mock_response.raise_for_status = lambda: None
-        mock_http.get = AsyncMock(return_value=mock_response)
-
         with TestClient(app, raise_server_exceptions=True) as client:
-            app.state.http_client = mock_http
+            app.state.http_client = _mock_dds_http_client()
             resp = client.get("/topologies")
             assert resp.status_code == 200
 
