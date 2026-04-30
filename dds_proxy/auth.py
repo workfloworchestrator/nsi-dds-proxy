@@ -127,6 +127,8 @@ async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
         return None
 
     path = request.url.path
+    for name, value in request.headers.items():
+        log.debug("Request header", path=path, header=name, value=value)
     auth_header = request.headers.get("Authorization", "")
 
     if not auth_header.startswith(_BEARER_PREFIX):
