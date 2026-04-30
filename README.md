@@ -75,6 +75,26 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 | `DDS_PROXY_PORT` | `8000` | TCP port the server listens on. |
 | `ROOT_PATH` | _(empty)_ | ASGI root path prefix. Set when serving behind a reverse proxy that strips a path prefix (e.g. `/dds-proxy`). Ensures Swagger UI loads the OpenAPI spec from the correct URL. Does not affect route matching. |
 
+### OIDC Authentication (optional)
+
+When deployed behind an oauth2-proxy or similar OIDC gateway, the DDS Proxy can validate the forwarded JWT and enforce group-based authorization. Authentication is **disabled by default**.
+
+Token validation is **opportunistic**: when enabled, JWTs are validated if a `Bearer` token is present, but requests without one pass through. This allows a single deployment to serve both an mTLS ingress (machine clients without JWTs) and an OIDC ingress (browser users with JWTs from oauth2-proxy). Each ingress enforces its own authentication; the application adds defense-in-depth for the OIDC path.
+
+| Variable | Default | Description |
+|---|---|---|
+| `OIDC_ENABLED` | `false` | Enable JWT validation on all data endpoints. `/health` is always unauthenticated. |
+| `OIDC_ISSUER` | _(empty)_ | Expected `iss` claim in the JWT (e.g. `https://connect.test.surfconext.nl`). |
+| `OIDC_AUDIENCE` | _(empty)_ | Expected `aud` claim in the JWT (e.g. `demo.pilot1.sram.surf.nl`). |
+| `OIDC_JWKS_URI` | _(empty)_ | JWKS endpoint URL. Auto-discovered from `{OIDC_ISSUER}/.well-known/openid-configuration` if empty. |
+| `OIDC_USERINFO_URI` | _(empty)_ | Userinfo endpoint URL. Auto-discovered from the OIDC configuration if empty. |
+| `OIDC_GROUP_CLAIM` | `eduperson_entitlement` | Claim name in the userinfo response that contains group memberships. |
+| `OIDC_REQUIRED_GROUPS` | _(empty)_ | Groups required for access. Supports comma-separated (`g1,g2`) or JSON array (`["g1","g2"]`). Empty means no group check — any authenticated user is allowed. |
+| `OIDC_JWKS_CACHE_LIFESPAN` | `300` | JWKS key cache TTL in seconds. |
+| `OIDC_USERINFO_CACHE_TTL` | `60` | Userinfo response cache TTL in seconds. |
+
+The proxy validates the `Authorization: Bearer` header (ID token) for signature, issuer, audience, and expiry. For group-based authorization, it calls the OIDC userinfo endpoint using the access token from the `X-Auth-Request-Access-Token` header (set by oauth2-proxy).
+
 A ready-to-use template is provided in `dds_proxy.env`. The application automatically reads this file from the working directory when it starts, so in most cases you only need to edit it in place.
 
 If you want to maintain multiple configurations (e.g. for different environments), copy it and pass the copy explicitly via `docker run --env-file` or by exporting the variables in your shell:
