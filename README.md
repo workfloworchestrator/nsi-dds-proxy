@@ -89,7 +89,7 @@ Token validation is **opportunistic**: when enabled, JWTs are validated if a `Be
 | `OIDC_JWKS_URI` | _(empty)_ | JWKS endpoint URL. Auto-discovered from `{OIDC_ISSUER}/.well-known/openid-configuration` if empty. |
 | `OIDC_USERINFO_URI` | _(empty)_ | Userinfo endpoint URL. Auto-discovered from the OIDC configuration if empty. |
 | `OIDC_GROUP_CLAIM` | `eduperson_entitlement` | Claim name in the userinfo response that contains group memberships. |
-| `OIDC_REQUIRED_GROUPS` | _(empty)_ | Groups required for access. Supports comma-separated (`g1,g2`) or JSON array (`["g1","g2"]`). Empty means no group check — any authenticated user is allowed. |
+| `OIDC_REQUIRED_GROUPS` | `[]` | Groups required for access. Supports comma-separated (`g1,g2`) or JSON array (`["g1","g2"]`). Use `[]` for no group check (any authenticated user is allowed). **Note:** pydantic-settings JSON-parses `list` env vars, so an empty string will cause a startup error — always use `[]` instead. |
 | `OIDC_JWKS_CACHE_LIFESPAN` | `300` | JWKS key cache TTL in seconds. |
 | `OIDC_USERINFO_CACHE_TTL` | `60` | Userinfo response cache TTL in seconds. |
 

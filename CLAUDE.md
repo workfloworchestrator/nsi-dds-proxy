@@ -49,6 +49,7 @@ dds-proxy
 - XML parsing uses 4 NML/DDS namespaces defined in `dds_client.py`
 - All responses are full collections (no filtering/pagination)
 - OIDC JWT validation is opportunistic: when `OIDC_ENABLED=true`, tokens are validated if present but requests without a Bearer token pass through. This allows a single deployment behind both an mTLS ingress (machine clients, no JWT) and an OIDC ingress (browser users, JWT from oauth2-proxy). Group-based authorization via userinfo endpoint. Separate vanilla httpx client for OIDC calls (not the mTLS DDS client).
+- `OIDC_REQUIRED_GROUPS` must be `[]` (not empty string) when no groups are required — pydantic-settings JSON-parses `list[str]` env vars before field validators run, so `""` causes a startup crash.
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`
 
 ## Code Style
