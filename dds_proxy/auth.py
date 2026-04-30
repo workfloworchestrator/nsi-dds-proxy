@@ -103,7 +103,9 @@ async def validate_token(token: str, oidc_provider: OIDCProvider) -> dict[str, A
     return payload
 
 
-def check_groups(userinfo: dict[str, Any], required_groups: list[str], group_claim: str) -> None:
+def check_groups(
+    userinfo: dict[str, Any], required_groups: list[str], group_claim: str
+) -> list[str]:
     """Verify that the user belongs to at least one of the required groups."""
     user_groups = userinfo.get(group_claim, [])
     if isinstance(user_groups, str):
@@ -116,9 +118,11 @@ def check_groups(userinfo: dict[str, Any], required_groups: list[str], group_cla
         required_groups=required_groups,
         claim=group_claim,
     )
-    if not set(required_groups).intersection(user_groups):
+    matched = sorted(set(required_groups).intersection(user_groups))
+    if not matched:
         log.warning("Insufficient group membership", sub=sub, user_groups=user_groups, required_groups=required_groups)
         raise HTTPException(status_code=403, detail="Insufficient group membership")
+    return matched
 
 
 async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
@@ -180,7 +184,8 @@ async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
             raise HTTPException(status_code=502, detail=f"Userinfo fetch failed: {exc}") from exc
 
         log.debug("Userinfo received", sub=sub, userinfo=userinfo)
-        check_groups(userinfo, settings.oidc_required_groups, settings.oidc_group_claim)
-        log.info("Group authorization granted", sub=sub, path=path)
+        matched = check_groups(userinfo, settings.oidc_required_groups, settings.oidc_group_claim)
+        email = userinfo.get("email", "unknown")
+        log.info("Group authorization granted", sub=sub, email=email, matched_groups=matched, path=path)
 
     return payload

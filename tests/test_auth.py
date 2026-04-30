@@ -342,18 +342,18 @@ class TestHealthWithAuth:
 
 class TestCheckGroups:
     @pytest.mark.parametrize(
-        "userinfo,required,claim,should_pass",
+        "userinfo,required,claim,expected",
         [
-            pytest.param({"g": ["admin", "user"]}, ["admin"], "g", True, id="list-match"),
-            pytest.param({"g": "admin"}, ["admin"], "g", True, id="string-match"),
-            pytest.param({"g": ["viewer"]}, ["admin"], "g", False, id="no-match"),
-            pytest.param({}, ["admin"], "g", False, id="claim-missing"),
-            pytest.param({"g": ["a", "b", "c"]}, ["c", "d"], "g", True, id="partial-intersection"),
+            pytest.param({"g": ["admin", "user"]}, ["admin"], "g", ["admin"], id="list-match"),
+            pytest.param({"g": "admin"}, ["admin"], "g", ["admin"], id="string-match"),
+            pytest.param({"g": ["viewer"]}, ["admin"], "g", None, id="no-match"),
+            pytest.param({}, ["admin"], "g", None, id="claim-missing"),
+            pytest.param({"g": ["a", "b", "c"]}, ["c", "d"], "g", ["c"], id="partial-intersection"),
         ],
     )
-    def test_check_groups(self, userinfo, required, claim, should_pass):
-        if should_pass:
-            check_groups(userinfo, required, claim)
+    def test_check_groups(self, userinfo, required, claim, expected):
+        if expected is not None:
+            assert check_groups(userinfo, required, claim) == expected
         else:
             with pytest.raises(Exception, match="403"):
                 check_groups(userinfo, required, claim)
