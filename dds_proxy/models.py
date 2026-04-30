@@ -12,6 +12,7 @@
 # limitations under the License.
 #
 from pydantic import BaseModel
+from pydantic.alias_generators import to_camel
 
 
 class Lifetime(BaseModel):
@@ -41,14 +42,7 @@ class SwitchingService(BaseModel):
     label_type: str
     topology_id: str
 
-    model_config = {
-        "populate_by_name": True,
-        "alias_generator": lambda field: {
-            "label_swapping": "labelSwapping",
-            "label_type": "labelType",
-            "topology_id": "topologyId",
-        }.get(field, field),
-    }
+    model_config = {"populate_by_name": True, "alias_generator": to_camel}
 
 
 class ServiceTerminationPoint(BaseModel):
@@ -60,13 +54,7 @@ class ServiceTerminationPoint(BaseModel):
     label_group: str
     switching_service_id: str
 
-    model_config = {
-        "populate_by_name": True,
-        "alias_generator": lambda field: {
-            "label_group": "labelGroup",
-            "switching_service_id": "switchingServiceId",
-        }.get(field, field),
-    }
+    model_config = {"populate_by_name": True, "alias_generator": to_camel}
 
 
 class ServiceDemarcationPoint(BaseModel):
@@ -75,10 +63,4 @@ class ServiceDemarcationPoint(BaseModel):
     stp_a_id: str
     stp_z_id: str
 
-    model_config = {
-        "populate_by_name": True,
-        "alias_generator": lambda field: {
-            "stp_a_id": "stpAId",
-            "stp_z_id": "stpZId",
-        }.get(field, field),
-    }
+    model_config = {"populate_by_name": True, "alias_generator": to_camel}

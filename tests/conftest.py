@@ -15,22 +15,22 @@
 
 import base64
 import gzip
-from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 import pytest
-from fastapi.testclient import TestClient
 
-from dds_proxy.main import app
+from dds_proxy import dds_client
+from dds_proxy.dds_client import IS_ALIAS, NS, TOPOLOGY_CONTENT_TYPE
 
 # ---------------------------------------------------------------------------
-# Namespace constants (mirrors dds_client.py)
+# Namespace constants
 # ---------------------------------------------------------------------------
 
-DDS_NS = "http://schemas.ogf.org/nsi/2014/02/discovery/types"
-NML_NS = "http://schemas.ogf.org/nml/2013/05/base#"
-ETH_NS = "http://schemas.ogf.org/nml/2012/10/ethernet"
-ALIAS = f"{NML_NS}isAlias"
-TOPO_TYPE = "vnd.ogf.nsi.topology.v2+xml"
+DDS_NS = NS["dds"]
+NML_NS = NS["nml"]
+ETH_NS = NS["eth"]
+ALIAS = IS_ALIAS
+TOPO_TYPE = TOPOLOGY_CONTENT_TYPE
 
 
 # ---------------------------------------------------------------------------
@@ -241,15 +241,8 @@ SIMPLE_COLLECTION = make_dds_collection(
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def client():
-    """FastAPI test client with a mocked HTTP client on app.state."""
-    mock_http = AsyncMock()
-    mock_response = AsyncMock()
-    mock_response.content = SIMPLE_COLLECTION
-    mock_response.raise_for_status = lambda: None
-    mock_http.get = AsyncMock(return_value=mock_response)
-
-    with TestClient(app) as c:
-        app.state.http_client = mock_http
-        yield c, mock_http
+@pytest.fixture(autouse=True)
+def clear_cache():
+    """Ensure every test starts with an empty DDS cache."""
+    with patch.dict(dds_client._cache, {}, clear=True):
+        yield

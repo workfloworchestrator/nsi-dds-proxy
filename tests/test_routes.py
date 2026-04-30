@@ -17,7 +17,7 @@ Uses FastAPI's TestClient with a mocked HTTP client injected onto app.state,
 so no real network calls are made.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -37,13 +37,6 @@ from tests.conftest import (
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def clear_cache():
-    """Ensure every test starts with an empty DDS cache."""
-    with patch.dict(dds_client._cache, {}, clear=True):
-        yield
 
 
 @pytest.fixture

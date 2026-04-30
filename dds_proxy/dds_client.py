@@ -21,6 +21,7 @@ Pydantic models.
 import base64
 import gzip
 import time
+from itertools import chain
 
 import httpx
 import structlog
@@ -52,7 +53,10 @@ TOPOLOGY_CONTENT_TYPE = "vnd.ogf.nsi.topology.v2+xml"
 
 HAS_SERVICE = "http://schemas.ogf.org/nml/2013/05/base#hasService"
 HAS_INBOUND_PORT = "http://schemas.ogf.org/nml/2013/05/base#hasInboundPort"
+HAS_OUTBOUND_PORT = "http://schemas.ogf.org/nml/2013/05/base#hasOutboundPort"
 IS_ALIAS = "http://schemas.ogf.org/nml/2013/05/base#isAlias"
+
+HAS_PORT_TYPES = {HAS_INBOUND_PORT, HAS_OUTBOUND_PORT}
 
 # ---------------------------------------------------------------------------
 # Simple TTL cache
@@ -160,6 +164,111 @@ async def _get_topology_documents(
     return results
 
 
+def _collect_inbound_ports(nml_root: etree._Element) -> dict[str, etree._Element]:
+    """Build a map of PortGroup id -> PortGroup element from hasInboundPort Relations."""
+    return {
+        pg_item.get("id", ""): pg_item
+        for pg_item in chain.from_iterable(
+            rel_el.findall("nml:PortGroup", NS)
+            for rel_el in nml_root.findall("nml:Relation", NS)
+            if rel_el.get("type") == HAS_INBOUND_PORT
+        )
+        if pg_item.get("id", "")
+    }
+
+
+def _find_matching_inbound_port(
+    port_el: etree._Element,
+    inbound_ports: dict[str, etree._Element],
+) -> etree._Element | None:
+    """Find the inbound PortGroup that matches a BidirectionalPort's child PortGroup."""
+    for pg_ref in port_el.findall("nml:PortGroup", NS):
+        ref_id = pg_ref.get("id", "")
+        if ref_id in inbound_ports:
+            log.debug("fetch stps inbound portgroup matched", port_id=port_el.get("id", ""), pg_id=ref_id)
+            return inbound_ports[ref_id]
+    return None
+
+
+def _build_pg_to_stp_map(docs: TopologyDocuments) -> dict[str, str]:
+    """Build a reverse map from PortGroup id to parent BidirectionalPort id across all topologies."""
+    return {
+        pg_id: stp_id
+        for _dds_doc, nml_root in docs
+        for bidir_el in nml_root.findall("nml:BidirectionalPort", NS)
+        for stp_id in [bidir_el.get("id", "")]
+        for pg_ref in bidir_el.findall("nml:PortGroup", NS)
+        for pg_id in [pg_ref.get("id", "")]
+        if pg_id
+    }
+
+
+def _collect_alias_pairs(
+    pg_el: etree._Element,
+    stp_a_id: str,
+    pg_to_stp: dict[str, str],
+) -> list[tuple[str, str]]:
+    """Extract (stp_a, stp_z) alias pairs from a PortGroup's isAlias Relations."""
+    pairs: list[tuple[str, str]] = []
+    for alias_pg in chain.from_iterable(
+        alias_rel.findall("nml:PortGroup", NS)
+        for alias_rel in pg_el.findall("nml:Relation", NS)
+        if alias_rel.get("type") == IS_ALIAS
+    ):
+        alias_pg_id = alias_pg.get("id", "")
+        if not alias_pg_id:
+            continue
+        stp_z_id = pg_to_stp.get(alias_pg_id)
+        if not stp_z_id:
+            log.debug("fetch sdps remote pg unresolved", alias_pg_id=alias_pg_id, stp_a_id=stp_a_id)
+            continue
+        pairs.append((stp_a_id, stp_z_id))
+    return pairs
+
+
+def _parse_stp(
+    port_el: etree._Element,
+    inbound_ports: dict[str, etree._Element],
+    ss_id: str,
+) -> ServiceTerminationPoint | None:
+    """Parse a single BidirectionalPort element into a ServiceTerminationPoint."""
+    port_id = port_el.get("id", "")
+    if not port_id:
+        return None
+
+    name_el = port_el.find("nml:name", NS)
+    name = name_el.text.strip() if name_el is not None and name_el.text else port_id
+
+    capacity = 0
+    label_group = ""
+    pg_el = _find_matching_inbound_port(port_el, inbound_ports)
+
+    if pg_el is not None:
+        cap_el = pg_el.find("eth:capacity", NS)
+        if cap_el is not None and cap_el.text:
+            try:
+                capacity = int(cap_el.text.strip())
+            except ValueError:
+                log.warning("fetch stps invalid capacity", port_id=port_id, raw=cap_el.text)
+
+        lg_el = pg_el.find("nml:LabelGroup", NS)
+        if lg_el is not None and lg_el.text:
+            label_group = lg_el.text.strip()
+    else:
+        log.debug("fetch stps no inbound portgroup", port_id=port_id)
+
+    log.debug(
+        "fetch stps parsed", port_id=port_id, name=name, capacity=capacity, label_group=label_group, ss_id=ss_id
+    )
+    return ServiceTerminationPoint(
+        id=port_id,
+        name=name,
+        capacity=capacity,
+        label_group=label_group,
+        switching_service_id=ss_id,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public parse functions
 # ---------------------------------------------------------------------------
@@ -200,7 +309,7 @@ async def fetch_topologies(
             )
         )
 
-    log.debug("Fetch topologies done", count=len(topologies))
+    log.debug("fetch topologies done", count=len(topologies))
     return topologies
 
 
@@ -209,21 +318,21 @@ async def fetch_switching_services(
     dds_base_url: str,
 ) -> list[SwitchingService]:
     """Fetch switching services from DDS."""
-    log.debug("Fetch switching services start")
+    log.debug("fetch switching services start")
     docs = await _get_topology_documents(client, dds_base_url)
     services = []
 
     for dds_doc, nml_root in docs:
         topology_id = dds_doc.get("id") or nml_root.get("id") or ""
         ss_els = nml_root.findall(".//nml:SwitchingService", NS)
-        log.debug("Fetch switching services scanning", topology_id=topology_id, found=len(ss_els))
+        log.debug("fetch switching services scanning", topology_id=topology_id, found=len(ss_els))
 
         for ss_el in ss_els:
             ss_id = ss_el.get("id", "")
             encoding = ss_el.get("encoding", "")
             label_swapping = ss_el.get("labelSwapping", "false").lower() == "true"
             label_type = ss_el.get("labelType", "")
-            log.debug("Fetch switching services parsed", ss_id=ss_id, encoding=encoding, label_swapping=label_swapping)
+            log.debug("fetch switching services parsed", ss_id=ss_id, encoding=encoding, label_swapping=label_swapping)
 
             services.append(
                 SwitchingService(
@@ -235,7 +344,7 @@ async def fetch_switching_services(
                 )
             )
 
-    log.debug("Fetch switching services done", count=len(services))
+    log.debug("fetch switching services done", count=len(services))
     return services
 
 
@@ -250,23 +359,15 @@ async def fetch_stps(
     PortGroup (id = port_id + inbound_suffix) inside the hasInboundPort Relation.
     The SwitchingService id is found via the hasService Relation.
     """
-    log.debug("Fetch stps start")
+    log.debug("fetch stps start")
     docs = await _get_topology_documents(client, dds_base_url)
     stps = []
 
     for _dds_doc, nml_root in docs:
         topo_id = nml_root.get("id", "<unknown>")
 
-        # Build a map of PortGroup id -> PortGroup element from hasInboundPort
-        inbound_ports: dict[str, etree._Element] = {}
-        for rel_el in nml_root.findall("nml:Relation", NS):
-            if rel_el.get("type") == HAS_INBOUND_PORT:
-                for pg_item in rel_el.findall("nml:PortGroup", NS):
-                    pg_id = pg_item.get("id", "")
-                    if pg_id:
-                        inbound_ports[pg_id] = pg_item
-
-        log.debug("Fetch stps inbound ports", topo_id=topo_id, count=len(inbound_ports))
+        inbound_ports = _collect_inbound_ports(nml_root)
+        log.debug("fetch stps inbound ports", topo_id=topo_id, count=len(inbound_ports))
 
         # Find the SwitchingService id via hasService Relation
         ss_id = ""
@@ -277,61 +378,17 @@ async def fetch_stps(
                     ss_id = ss_el.get("id", "")
                     break
 
-        log.debug("Fetch stps switching service", topo_id=topo_id, ss_id=ss_id)
+        log.debug("fetch stps switching service", topo_id=topo_id, ss_id=ss_id)
 
-        # Each direct BidirectionalPort child of Topology is an STP
         bidir_ports = nml_root.findall("nml:BidirectionalPort", NS)
         log.debug("fetch stps bidirectional ports", topo_id=topo_id, count=len(bidir_ports))
 
         for port_el in bidir_ports:
-            port_id = port_el.get("id", "")
-            if not port_id:
-                continue
+            stp = _parse_stp(port_el, inbound_ports, ss_id)
+            if stp is not None:
+                stps.append(stp)
 
-            name_el = port_el.find("nml:name", NS)
-            name = name_el.text.strip() if name_el is not None and name_el.text else port_id
-
-            # Find any PortGroup child of this BidirectionalPort whose id
-            # matches an entry in inbound_ports — avoids assuming a :in suffix
-            capacity = 0
-            label_group = ""
-            pg_el: etree._Element | None = None
-
-            for pg_ref in port_el.findall("nml:PortGroup", NS):
-                ref_id = pg_ref.get("id", "")
-                if ref_id in inbound_ports:
-                    pg_el = inbound_ports[ref_id]
-                    log.debug("Fetch stps inbound portgroup matched", port_id=port_id, pg_id=ref_id)
-                    break
-
-            if pg_el is not None:
-                cap_el = pg_el.find("eth:capacity", NS)
-                if cap_el is not None and cap_el.text:
-                    try:
-                        capacity = int(cap_el.text.strip())
-                    except ValueError:
-                        log.warning("Fetch stps invalid capacity", port_id=port_id, raw=cap_el.text)
-
-                lg_el = pg_el.find("nml:LabelGroup", NS)
-                if lg_el is not None and lg_el.text:
-                    label_group = lg_el.text.strip()
-            else:
-                log.debug("Fetch stps no inbound portgroup", port_id=port_id)
-
-            log.debug(
-                "Fetch stps parsed", port_id=port_id, name=name, capacity=capacity, label_group=label_group, ss_id=ss_id
-            )
-            stps.append(
-                ServiceTerminationPoint(
-                    id=port_id,
-                    name=name,
-                    capacity=capacity,
-                    label_group=label_group,
-                    switching_service_id=ss_id,
-                )
-            )
-
-    log.debug("Fetch stps done", count=len(stps))
+    log.debug("fetch stps done", count=len(stps))
     return stps
 
 
@@ -346,27 +403,12 @@ async def fetch_sdps(
     PortGroup id back to its parent BidirectionalPort id so we don't have to
     make any assumptions about naming conventions.
     """
-    log.debug("FetchD sdps start")
+    log.debug("fetch sdps start")
     docs = await _get_topology_documents(client, dds_base_url)
     sdps = []
 
-    HAS_PORT_TYPES = {
-        "http://schemas.ogf.org/nml/2013/05/base#hasInboundPort",
-        "http://schemas.ogf.org/nml/2013/05/base#hasOutboundPort",
-    }
-
-    # Build a global reverse map across ALL topologies first so we can
-    # resolve PortGroup ids from remote topologies too.
-    pg_to_stp: dict[str, str] = {}
-    for _dds_doc, nml_root in docs:
-        for bidir_el in nml_root.findall("nml:BidirectionalPort", NS):
-            stp_id = bidir_el.get("id", "")
-            for pg_ref in bidir_el.findall("nml:PortGroup", NS):
-                pg_id = pg_ref.get("id", "")
-                if pg_id:
-                    pg_to_stp[pg_id] = stp_id
-
-    log.debug("Fetch sdps pg to stp map", total_entries=len(pg_to_stp))
+    pg_to_stp = _build_pg_to_stp_map(docs)
+    log.debug("fetch sdps pg to stp map", total_entries=len(pg_to_stp))
 
     # Collect all declared alias pairs (stp_a, stp_z) across all topologies.
     # A pair only becomes an SDP when both directions are declared.
@@ -374,48 +416,33 @@ async def fetch_sdps(
 
     for _dds_doc, nml_root in docs:
         topo_id = nml_root.get("id", "<unknown>")
-
-        for rel_el in nml_root.findall("nml:Relation", NS):
-            if rel_el.get("type") not in HAS_PORT_TYPES:
+        port_groups = chain.from_iterable(
+            rel_el.findall("nml:PortGroup", NS)
+            for rel_el in nml_root.findall("nml:Relation", NS)
+            if rel_el.get("type") in HAS_PORT_TYPES
+        )
+        for pg_el in port_groups:
+            pg_id = pg_el.get("id", "")
+            stp_a_id = pg_to_stp.get(pg_id)
+            if not stp_a_id:
+                log.debug("fetch sdps local pg unresolved", pg_id=pg_id, topo_id=topo_id)
                 continue
+            declared.update(_collect_alias_pairs(pg_el, stp_a_id, pg_to_stp))
 
-            for pg_el in rel_el.findall("nml:PortGroup", NS):
-                pg_id = pg_el.get("id", "")
-                stp_a_id = pg_to_stp.get(pg_id)
-                if not stp_a_id:
-                    log.debug("Fetch sdps local pg unresolved", pg_id=pg_id, topo_id=topo_id)
-                    continue
-
-                for alias_rel in pg_el.findall("nml:Relation", NS):
-                    if alias_rel.get("type") != IS_ALIAS:
-                        continue
-
-                    for alias_pg in alias_rel.findall("nml:PortGroup", NS):
-                        alias_pg_id = alias_pg.get("id", "")
-                        if not alias_pg_id:
-                            continue
-
-                        stp_z_id = pg_to_stp.get(alias_pg_id)
-                        if not stp_z_id:
-                            log.debug("Fetch sdps remote pg unresolved", alias_pg_id=alias_pg_id, stp_a_id=stp_a_id)
-                            continue
-
-                        declared.add((stp_a_id, stp_z_id))
-
-    log.debug("Fetch sdps declared pairs", count=len(declared))
+    log.debug("fetch sdps declared pairs", count=len(declared))
 
     # Only emit an SDP when both (A→Z) and (Z→A) are declared.
     seen: set[tuple[str, str]] = set()
     for stp_a_id, stp_z_id in declared:
         if (stp_z_id, stp_a_id) not in declared:
-            log.debug("Fetch sdps one sided", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
+            log.debug("fetch sdps one sided", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
             continue
 
         pair = (stp_a_id, stp_z_id)
         reverse = (stp_z_id, stp_a_id)
         if pair not in seen and reverse not in seen:
             seen.add(pair)
-            log.debug("Fetch sdps parsed", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
+            log.debug("fetch sdps parsed", stp_a_id=stp_a_id, stp_z_id=stp_z_id)
             sdps.append(
                 ServiceDemarcationPoint(
                     stp_a_id=stp_a_id,
@@ -423,5 +450,5 @@ async def fetch_sdps(
                 )
             )
 
-    log.debug("Fetch sdps done", count=len(sdps))
+    log.debug("fetch sdps done", count=len(sdps))
     return sdps
