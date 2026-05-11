@@ -20,7 +20,7 @@ import httpx
 import jwt
 import structlog
 from fastapi import HTTPException, Request
-from jwt import PyJWKClient
+from jwt import PyJWKClient, PyJWKClientConnectionError, PyJWKClientError
 
 from dds_proxy.config import settings
 
@@ -163,6 +163,11 @@ async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
 
             try:
                 payload = await validate_token(token, oidc_provider)
+            except (PyJWKClientError, PyJWKClientConnectionError) as exc:
+                log.error("JWKS key retrieval failed", path=path, error=str(exc))
+                raise HTTPException(
+                    status_code=401, detail="Token validation failed", headers=_WWW_AUTHENTICATE
+                ) from exc
             except jwt.PyJWTError as exc:
                 detail = _JWT_ERROR_MESSAGES.get(type(exc), f"Invalid token: {exc}")
                 log.warning(detail, path=path, error=str(exc))
@@ -186,7 +191,7 @@ async def get_authenticated_user(request: Request) -> dict[str, Any] | None:
                     userinfo = await oidc_provider.fetch_userinfo(x_access_token)
                 except httpx.HTTPError as exc:
                     log.error("Userinfo fetch failed", sub=sub, error=str(exc))
-                    raise HTTPException(status_code=502, detail=f"Userinfo fetch failed: {exc}") from exc
+                    raise HTTPException(status_code=502, detail="Failed to fetch user information") from exc
 
                 log.debug("Userinfo received", sub=sub, userinfo=userinfo)
                 matched = check_groups(userinfo, settings.oidc_required_groups, settings.oidc_group_claim)

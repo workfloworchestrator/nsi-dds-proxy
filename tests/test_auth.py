@@ -23,6 +23,7 @@ import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
+from jwt import PyJWKClientConnectionError, PyJWKClientError
 
 from dds_proxy.auth import OIDCProvider, check_groups
 from dds_proxy.main import app
@@ -194,6 +195,20 @@ class TestSignatureValidation:
         resp = client.get("/topologies", headers={"Authorization": "Bearer tampered.jwt.here"})
         assert resp.status_code == 401
 
+    @pytest.mark.parametrize(
+        "error",
+        [
+            pytest.param(PyJWKClientError("Failed to fetch JWKS"), id="jwk-client-error"),
+            pytest.param(PyJWKClientConnectionError("Connection refused"), id="jwk-connection-error"),
+        ],
+    )
+    def test_jwks_failure_returns_401(self, auth_api, error):
+        client, mock_provider = auth_api
+        mock_provider.get_signing_key.side_effect = error
+        resp = client.get("/topologies", headers={"Authorization": "Bearer some.jwt.token"})
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Token validation failed"
+
 
 # ---------------------------------------------------------------------------
 # Claim validation tests
@@ -296,6 +311,9 @@ class TestGroupAuthorization:
         }
         resp = client.get("/topologies", headers=headers)
         assert resp.status_code == 502
+        detail = resp.json()["detail"]
+        assert detail == "Failed to fetch user information"
+        assert "connection refused" not in detail
 
     def test_no_groups_required_skips_check(self, auth_api, make_token):
         client, mock_provider = auth_api
@@ -482,3 +500,11 @@ class TestConfigValidation:
 
         s = Settings(oidc_required_groups=input_val)
         assert s.oidc_required_groups == expected
+
+    def test_malformed_json_groups_raises_error(self):
+        from pydantic import ValidationError
+
+        from dds_proxy.config import Settings
+
+        with pytest.raises(ValidationError, match="Invalid JSON"):
+            Settings(oidc_required_groups='["g1", invalid')

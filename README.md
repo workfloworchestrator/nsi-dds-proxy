@@ -170,7 +170,7 @@ flowchart TB
 | Variable | Default | Description |
 |---|---|---|
 | `AUTH_ENABLED` | `false` | Enable authentication on all data endpoints. When `true`, every request must be authenticated via OIDC (JWT) or mTLS (header from auth service). `/health` is always unauthenticated. Replaces the former `OIDC_ENABLED`. |
-| `MTLS_HEADER` | _(empty)_ | Header name that the mTLS auth service sets on successful validation (e.g. `X-Auth-Method`). When set and auth is enabled, the presence of this header counts as mTLS authentication. The auth service also sets `X-Client-DN` with the client certificate DN, which is logged for audit purposes. |
+| `MTLS_HEADER` | _(empty)_ | Header name that nsi-auth sets on successful validation (e.g. `X-Auth-Method`). When set and auth is enabled, the presence of this header counts as mTLS authentication. nsi-auth also sets `X-Client-DN` with the client certificate DN, which is logged for audit purposes. |
 | `OIDC_ISSUER` | _(empty)_ | Expected `iss` claim in the JWT (e.g. `https://connect.test.surfconext.nl`). OIDC validation is active when this is set and auth is enabled. |
 | `OIDC_AUDIENCE` | _(empty)_ | Expected `aud` claim in the JWT (e.g. `demo.pilot1.sram.surf.nl`). |
 | `OIDC_JWKS_URI` | _(empty)_ | JWKS endpoint URL. Auto-discovered from `{OIDC_ISSUER}/.well-known/openid-configuration` if empty. |
@@ -185,6 +185,24 @@ flowchart TB
 1. **OIDC path** (if `OIDC_ISSUER` is set): Check for a JWT in the `Authorization: Bearer` header, falling back to `X-Auth-Request-Access-Token` (set by oauth2-proxy). If a token is present, validate it for signature, issuer, audience, and expiry. The `X-Auth-Request-Access-Token` fallback is needed because the nginx ingress controller has a [known issue](https://github.com/kubernetes/ingress-nginx/issues/13163) where it clears the `Authorization` header from auth subrequest responses. If a token is present but invalid, the request is rejected (mTLS does not override a bad JWT).
 2. **mTLS path** (if `MTLS_HEADER` is set): Check for the configured header (e.g. `X-Auth-Method`). This header is set by the mTLS auth subrequest service (nsi-auth) and forwarded by nginx via `auth-response-headers`. The client certificate DN from `X-Client-DN` is logged for audit.
 3. **Neither**: If no valid credentials are found, the request is rejected with 401.
+
+**Access token for group authorization:** When `OIDC_REQUIRED_GROUPS` is set, the proxy needs an access token (via `X-Auth-Request-Access-Token`) to call the OIDC userinfo endpoint for group membership. This header is set by oauth2-proxy when `set_xauthrequest = true` and `pass_access_token = true`. If a valid JWT is present but the access token header is missing, the request is rejected with 401.
+
+#### Error responses
+
+When authentication is enabled, data endpoints may return these error responses:
+
+| Status | Detail | Cause |
+|---|---|---|
+| `401` | `Token expired` | JWT `exp` claim is in the past |
+| `401` | `Invalid audience` | JWT `aud` claim does not match `OIDC_AUDIENCE` |
+| `401` | `Invalid issuer` | JWT `iss` claim does not match `OIDC_ISSUER` |
+| `401` | `Invalid token: <reason>` | Other JWT validation failures (missing required claims, bad signature, etc.) |
+| `401` | `Token validation failed` | JWKS key retrieval failed (endpoint unreachable, key not found) |
+| `401` | `Missing access token for group lookup` | Group authorization required but `X-Auth-Request-Access-Token` header missing |
+| `401` | `Authentication required` | No valid credentials found (no JWT, no mTLS header) |
+| `403` | `Insufficient group membership` | User not in any of the required groups |
+| `502` | `Failed to fetch user information` | Userinfo endpoint unreachable or returned an error |
 
 **Defense-in-depth:** The OIDC ingress should strip the `X-Auth-Method` header to prevent clients from spoofing mTLS authentication. With nginx, use `configuration-snippet: proxy_set_header X-Auth-Method "";`. With Traefik, use a Headers middleware with `customRequestHeaders: { X-Auth-Method: "" }`.
 

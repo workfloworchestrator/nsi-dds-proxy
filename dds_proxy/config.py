@@ -57,7 +57,10 @@ class Settings(BaseSettings):
         if not v:
             return []
         if v.startswith("["):
-            return json.loads(v)
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in OIDC_REQUIRED_GROUPS: {e}") from e
         return [g.strip() for g in v.split(",") if g.strip()]
 
     model_config = SettingsConfigDict(env_file="dds_proxy.env", env_file_encoding="utf-8")

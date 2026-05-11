@@ -48,7 +48,7 @@ dds-proxy
 - `root_path` setting for serving behind a path-stripping reverse proxy (e.g. the ana-automation-ui portal)
 - XML parsing uses 4 NML/DDS namespaces defined in `dds_client.py`
 - All responses are full collections (no filtering/pagination)
-- Dual-ingress authentication: when `AUTH_ENABLED=true`, every request must be authenticated via OIDC (JWT) or mTLS (header from auth service). OIDC is active when `OIDC_ISSUER` is set; mTLS is active when `MTLS_HEADER` is set. The OIDC ingress strips `X-Auth-Method` via nginx `configuration-snippet` to prevent spoofing. Group-based authorization via userinfo endpoint. Separate vanilla httpx client for OIDC calls (not the mTLS DDS client).
+- Dual-ingress authentication: when `AUTH_ENABLED=true`, every request must be authenticated via OIDC (JWT) or mTLS (header from nsi-auth). OIDC is active when `OIDC_ISSUER` is set; mTLS is active when `MTLS_HEADER` is set. The OIDC ingress strips `X-Auth-Method` via nginx `configuration-snippet` to prevent spoofing. Group-based authorization via userinfo endpoint. Separate vanilla httpx client for OIDC calls (not the mTLS DDS client). OIDC discovery validates that both `jwks_uri` and `userinfo_endpoint` are available, failing fast at startup if not.
 - `OIDC_REQUIRED_GROUPS` must be `[]` (not empty string) when no groups are required — pydantic-settings JSON-parses `list[str]` env vars before field validators run, so `""` causes a startup crash.
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`
 

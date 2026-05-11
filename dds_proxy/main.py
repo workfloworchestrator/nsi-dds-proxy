@@ -187,8 +187,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             resp = await app.state.oidc_http_client.get(oidc_config_url)
             resp.raise_for_status()
             oidc_config = resp.json()
-            jwks_uri = jwks_uri or oidc_config["jwks_uri"]
-            userinfo_uri = userinfo_uri or oidc_config["userinfo_endpoint"]
+            jwks_uri = jwks_uri or oidc_config.get("jwks_uri", "")
+            userinfo_uri = userinfo_uri or oidc_config.get("userinfo_endpoint", "")
+
+        if not jwks_uri or not userinfo_uri:
+            log.error(
+                "OIDC configuration incomplete",
+                jwks_uri=bool(jwks_uri),
+                userinfo_uri=bool(userinfo_uri),
+            )
+            raise SystemExit("OIDC requires both jwks_uri and userinfo_endpoint")
 
         app.state.oidc_provider = OIDCProvider(
             jwks_uri=jwks_uri,
