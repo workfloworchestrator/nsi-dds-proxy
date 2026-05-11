@@ -79,6 +79,8 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 
 The DDS Proxy supports two authentication methods: **OIDC** (JWT from oauth2-proxy) and **mTLS** (header from auth subrequest service). Authentication is **disabled by default**. When enabled, every request to data endpoints must be authenticated via at least one method; requests without valid credentials are rejected with 401.
 
+For a visual overview of the full authentication architecture, including ingress configuration and header flows, see the [Dual-Ingress Authentication Architecture](artwork/dual-ingress-auth.md) diagram.
+
 | Variable | Default | Description |
 |---|---|---|
 | `AUTH_ENABLED` | `false` | Enable authentication on all data endpoints. When `true`, every request must be authenticated via OIDC (JWT) or mTLS (header from auth service). `/health` is always unauthenticated. Replaces the former `OIDC_ENABLED`. |
