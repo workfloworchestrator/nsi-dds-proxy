@@ -75,6 +75,137 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 | `DDS_PROXY_PORT` | `8000` | TCP port the server listens on. |
 | `ROOT_PATH` | _(empty)_ | ASGI root path prefix. Set when serving behind a reverse proxy that strips a path prefix (e.g. `/dds-proxy`). Ensures Swagger UI loads the OpenAPI spec from the correct URL. Does not affect route matching. |
 
+### Authentication (optional)
+
+The DDS Proxy supports two authentication methods: **OIDC** (JWT from oauth2-proxy) and **mTLS** (header from auth subrequest service). Authentication is **disabled by default**. When enabled, every request to data endpoints must be authenticated via at least one method; requests without valid credentials are rejected with 401.
+
+#### Architecture
+
+Two separate nginx ingresses protect the DDS Proxy API — one for **mTLS** (machine clients) and one for **OIDC** (browser users). Both converge on the same dds-proxy instance, which performs a final authentication check before serving data.
+
+```mermaid
+flowchart TB
+    classDef client fill:#f0f0f0,stroke:#333
+    classDef ingress fill:#e8f4fd,stroke:#2196F3
+    classDef authsvc fill:#fff3e0,stroke:#FF9800
+    classDef appsvc fill:#e8f5e9,stroke:#4CAF50
+    classDef external fill:#fce4ec,stroke:#E91E63
+    classDef decision fill:#f3e5f5,stroke:#9C27B0
+
+    NSI(["NSI Client\n(with client certificate)"]):::client
+    Browser(["Browser User"]):::client
+    SRAM["SRAM IdP\n(OIDC Provider)"]:::external
+
+    subgraph mTLS_Path["mTLS Ingress — nsi-dds-proxy"]
+        direction TB
+        mNginx["nginx ingress controller\n\nauth-tls-verify-client: on\nauth-tls-secret: nsi-auth CA\nauth-url: nsi-auth /validate\nauth-response-headers:\n  X-Auth-Method, X-Client-DN"]:::ingress
+    end
+
+    subgraph OIDC_Path["OIDC Ingress — ana-automation-ui"]
+        direction TB
+        oNginx["nginx ingress controller\n\nauth-url: oauth2-proxy /oauth2/auth\nauth-response-headers:\n  Authorization,\n  X-Auth-Request-Access-Token\nconfiguration-snippet:\n  proxy_set_header X-Auth-Method \"\""]:::ingress
+        Portal["ana-automation-ui\n(portal landing page)"]:::appsvc
+        BackendIngress["Backend ingresses\n/dds-proxy/* /aggregator-proxy/* ..."]:::ingress
+        oNginx --> Portal
+        Portal --> BackendIngress
+    end
+
+    subgraph Auth_Services["Auth Services"]
+        nsiAuth["nsi-auth\n\nValidates client DN\nagainst allowed list"]:::authsvc
+        OAuth2["oauth2-proxy\n\nManages OIDC session\npass_access_token = true\nset_xauthrequest = true"]:::authsvc
+    end
+
+    NSI -->|"TLS handshake\n+ client certificate"| mNginx
+    Browser -->|"HTTPS\n+ session cookie"| oNginx
+
+    mNginx -.->|"auth subrequest\n(DN from ssl-client-subject-dn)"| nsiAuth
+    nsiAuth -.->|"200 OK\nX-Auth-Method: mTLS\nX-Client-DN: CN=..."| mNginx
+
+    oNginx -.->|"auth subrequest"| OAuth2
+    OAuth2 -.->|"200 OK\nAuthorization: Bearer JWT\nX-Auth-Request-Access-Token: ..."| oNginx
+    OAuth2 <-.->|"OIDC login\n+ token refresh"| SRAM
+
+    subgraph DDS_Proxy["dds-proxy (AUTH_ENABLED=true)"]
+        direction TB
+        AuthCheck{"get_authenticated_user"}:::decision
+        OIDC_Check["OIDC path\n\nJWT in Authorization or\nX-Auth-Request-Access-Token?\n→ Validate signature, issuer,\n   audience, expiry\n→ Check group membership\n   via userinfo endpoint"]:::appsvc
+        mTLS_Check["mTLS path\n\nX-Auth-Method header present?\n→ Log X-Client-DN for audit"]:::appsvc
+        OK(["200 — Serve data"]):::appsvc
+        Reject(["401 — Unauthorized"]):::client
+
+        AuthCheck -->|"JWT present"| OIDC_Check
+        AuthCheck -->|"No JWT"| mTLS_Check
+        OIDC_Check -->|"Valid"| OK
+        OIDC_Check -->|"Invalid JWT"| Reject
+        mTLS_Check -->|"Header set"| OK
+        mTLS_Check -->|"No header"| Reject
+    end
+
+    mNginx -->|"X-Auth-Method: mTLS\nX-Client-DN: CN=..."| AuthCheck
+    BackendIngress -->|"Authorization: Bearer JWT\nX-Auth-Request-Access-Token: ...\n(X-Auth-Method stripped)"| AuthCheck
+```
+
+#### Defense-in-depth measures
+
+| Measure | Purpose |
+|---|---|
+| **mTLS ingress verifies client cert** against CA chain before reaching nsi-auth | Only certificates signed by a trusted CA are accepted |
+| **nsi-auth validates DN** against an allowed list | Even with a valid cert, only pre-approved clients are authorized |
+| **OIDC ingress strips `X-Auth-Method`** header via `configuration-snippet` | Prevents browser users from spoofing mTLS authentication by injecting the header |
+| **Invalid JWT blocks request** even when `X-Auth-Method` is present | A bad JWT is always rejected — mTLS cannot rescue a failed OIDC attempt |
+| **dds-proxy requires at least one method** when `AUTH_ENABLED=true` | No unauthenticated passthrough — every request must prove its identity |
+| **Group-based authorization** via OIDC userinfo endpoint | OIDC users can be restricted to specific SRAM groups |
+
+#### Header flow summary
+
+| Header | Set by | Forwarded by | Consumed by |
+|---|---|---|---|
+| `X-Auth-Method: mTLS` | nsi-auth (on 200) | mTLS nginx (`auth-response-headers`) | dds-proxy (mTLS auth check) |
+| `X-Client-DN` | nsi-auth (on 200) | mTLS nginx (`auth-response-headers`) | dds-proxy (audit logging) |
+| `Authorization: Bearer <JWT>` | oauth2-proxy | OIDC nginx (`auth-response-headers`) | dds-proxy (OIDC auth check) |
+| `X-Auth-Request-Access-Token` | oauth2-proxy | OIDC nginx (`auth-response-headers`) | dds-proxy (JWT fallback + userinfo lookup) |
+
+#### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUTH_ENABLED` | `false` | Enable authentication on all data endpoints. When `true`, every request must be authenticated via OIDC (JWT) or mTLS (header from auth service). `/health` is always unauthenticated. Replaces the former `OIDC_ENABLED`. |
+| `MTLS_HEADER` | _(empty)_ | Header name that nsi-auth sets on successful validation (e.g. `X-Auth-Method`). When set and auth is enabled, the presence of this header counts as mTLS authentication. nsi-auth also sets `X-Client-DN` with the client certificate DN, which is logged for audit purposes. |
+| `OIDC_ISSUER` | _(empty)_ | Expected `iss` claim in the JWT (e.g. `https://connect.test.surfconext.nl`). OIDC validation is active when this is set and auth is enabled. |
+| `OIDC_AUDIENCE` | _(empty)_ | Expected `aud` claim in the JWT (e.g. `demo.pilot1.sram.surf.nl`). |
+| `OIDC_JWKS_URI` | _(empty)_ | JWKS endpoint URL. Auto-discovered from `{OIDC_ISSUER}/.well-known/openid-configuration` if empty. |
+| `OIDC_USERINFO_URI` | _(empty)_ | Userinfo endpoint URL. Auto-discovered from the OIDC configuration if empty. |
+| `OIDC_GROUP_CLAIM` | `eduperson_entitlement` | Claim name in the userinfo response that contains group memberships. |
+| `OIDC_REQUIRED_GROUPS` | `[]` | Groups required for access. Supports comma-separated (`g1,g2`) or JSON array (`["g1","g2"]`). Use `[]` for no group check (any authenticated user is allowed). **Note:** pydantic-settings JSON-parses `list` env vars, so an empty string will cause a startup error — always use `[]` instead. |
+| `OIDC_JWKS_CACHE_LIFESPAN` | `300` | JWKS key cache TTL in seconds. |
+| `OIDC_USERINFO_CACHE_TTL` | `60` | Userinfo response cache TTL in seconds. |
+
+**Authentication flow** when `AUTH_ENABLED=true`:
+
+1. **OIDC path** (if `OIDC_ISSUER` is set): Check for a JWT in the `Authorization: Bearer` header, falling back to `X-Auth-Request-Access-Token` (set by oauth2-proxy). If a token is present, validate it for signature, issuer, audience, and expiry. The `X-Auth-Request-Access-Token` fallback is needed because the nginx ingress controller has a [known issue](https://github.com/kubernetes/ingress-nginx/issues/13163) where it clears the `Authorization` header from auth subrequest responses. If a token is present but invalid, the request is rejected (mTLS does not override a bad JWT).
+2. **mTLS path** (if `MTLS_HEADER` is set): Check for the configured header (e.g. `X-Auth-Method`). This header is set by the mTLS auth subrequest service (nsi-auth) and forwarded by nginx via `auth-response-headers`. The client certificate DN from `X-Client-DN` is logged for audit.
+3. **Neither**: If no valid credentials are found, the request is rejected with 401.
+
+**Access token for group authorization:** When `OIDC_REQUIRED_GROUPS` is set, the proxy needs an access token (via `X-Auth-Request-Access-Token`) to call the OIDC userinfo endpoint for group membership. This header is set by oauth2-proxy when `set_xauthrequest = true` and `pass_access_token = true`. If a valid JWT is present but the access token header is missing, the request is rejected with 401.
+
+#### Error responses
+
+When authentication is enabled, data endpoints may return these error responses:
+
+| Status | Detail | Cause |
+|---|---|---|
+| `401` | `Token expired` | JWT `exp` claim is in the past |
+| `401` | `Invalid audience` | JWT `aud` claim does not match `OIDC_AUDIENCE` |
+| `401` | `Invalid issuer` | JWT `iss` claim does not match `OIDC_ISSUER` |
+| `401` | `Invalid token: <reason>` | Other JWT validation failures (missing required claims, bad signature, etc.) |
+| `401` | `Token validation failed` | JWKS key retrieval failed (endpoint unreachable, key not found) |
+| `401` | `Missing access token for group lookup` | Group authorization required but `X-Auth-Request-Access-Token` header missing |
+| `401` | `Authentication required` | No valid credentials found (no JWT, no mTLS header) |
+| `403` | `Insufficient group membership` | User not in any of the required groups |
+| `502` | `Failed to fetch user information` | Userinfo endpoint unreachable or returned an error |
+
+**Defense-in-depth:** The OIDC ingress should strip the `X-Auth-Method` header to prevent clients from spoofing mTLS authentication. With nginx, use `configuration-snippet: proxy_set_header X-Auth-Method "";`. With Traefik, use a Headers middleware with `customRequestHeaders: { X-Auth-Method: "" }`.
+
 A ready-to-use template is provided in `dds_proxy.env`. The application automatically reads this file from the working directory when it starts, so in most cases you only need to edit it in place.
 
 If you want to maintain multiple configurations (e.g. for different environments), copy it and pass the copy explicitly via `docker run --env-file` or by exporting the variables in your shell:

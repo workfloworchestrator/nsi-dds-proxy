@@ -32,8 +32,9 @@ dds-proxy
 
 **FastAPI async application** with these layers:
 
-- **`main.py`** — App entry point, lifespan management (creates shared `httpx.AsyncClient` with mutual TLS), structured logging setup via structlog, health check endpoint
+- **`main.py`** — App entry point, lifespan management (creates shared `httpx.AsyncClient` with mutual TLS, optional OIDC provider), structured logging setup via structlog, health check endpoint
 - **`config.py`** — Pydantic Settings loaded from env vars or `dds_proxy.env`
+- **`auth.py`** — Authentication via OIDC JWT or mTLS header verification, plus group-based authorization. `OIDCProvider` manages JWKS key retrieval (via PyJWKClient) and userinfo lookups with TTL caching. `get_authenticated_user` is the FastAPI dependency applied to all data routes via `include_router(dependencies=...)`
 - **`dds_client.py`** — Core logic: fetches DDS collection, filters for topology documents, decodes gzip+base64 content, parses NML XML with lxml namespace-aware XPath. Has an in-memory TTL cache. Four `fetch_*` functions each return a list of parsed Pydantic models
 - **`models.py`** — Pydantic models (Topology, SwitchingService, ServiceTerminationPoint, ServiceDemarcationPoint) with camelCase alias generators for JSON serialization
 - **`routers/`** — One thin router per endpoint, all return 502 on upstream DDS failures
@@ -44,9 +45,11 @@ dds-proxy
 
 - Fully async (httpx + FastAPI), stateless with no database
 - Mutual TLS for DDS communication (client cert + custom CA bundle)
-- `root_path` setting for serving behind a path-stripping reverse proxy (e.g. the nsi-mgmt-info portal)
+- `root_path` setting for serving behind a path-stripping reverse proxy (e.g. the ana-automation-ui portal)
 - XML parsing uses 4 NML/DDS namespaces defined in `dds_client.py`
 - All responses are full collections (no filtering/pagination)
+- Dual-ingress authentication: when `AUTH_ENABLED=true`, every request must be authenticated via OIDC (JWT) or mTLS (header from nsi-auth). OIDC is active when `OIDC_ISSUER` is set; mTLS is active when `MTLS_HEADER` is set. The OIDC ingress strips `X-Auth-Method` via nginx `configuration-snippet` to prevent spoofing. Group-based authorization via userinfo endpoint. Separate vanilla httpx client for OIDC calls (not the mTLS DDS client). OIDC discovery validates that both `jwks_uri` and `userinfo_endpoint` are available, failing fast at startup if not.
+- `OIDC_REQUIRED_GROUPS` must be `[]` (not empty string) when no groups are required — pydantic-settings JSON-parses `list[str]` env vars before field validators run, so `""` causes a startup crash.
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`
 
 ## Code Style

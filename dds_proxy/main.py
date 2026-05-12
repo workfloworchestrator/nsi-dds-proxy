@@ -20,8 +20,9 @@ from typing import AsyncIterator
 
 import httpx
 import structlog
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 
+from dds_proxy.auth import OIDCProvider, get_authenticated_user
 from dds_proxy.config import settings
 from dds_proxy.routers import sdps, stps, switching_services, topologies
 
@@ -146,6 +147,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         host=settings.dds_proxy_host,
         port=settings.dds_proxy_port,
         log_level=settings.log_level.upper(),
+        auth_enabled=settings.auth_enabled,
+        mtls_header=settings.mtls_header,
     )
 
     ssl_context: ssl.SSLContext | str | bool
@@ -173,9 +176,61 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=settings.http_timeout_seconds,
     )
 
+    if settings.auth_enabled and settings.oidc_issuer:
+        app.state.oidc_http_client = httpx.AsyncClient()
+        jwks_uri = settings.oidc_jwks_uri
+        userinfo_uri = settings.oidc_userinfo_uri
+
+        if not jwks_uri or not userinfo_uri:
+            oidc_config_url = f"{settings.oidc_issuer.rstrip('/')}/.well-known/openid-configuration"
+            log.info("Discovering OIDC configuration", url=oidc_config_url)
+            resp = await app.state.oidc_http_client.get(oidc_config_url)
+            resp.raise_for_status()
+            oidc_config = resp.json()
+            jwks_uri = jwks_uri or oidc_config.get("jwks_uri", "")
+            userinfo_uri = userinfo_uri or oidc_config.get("userinfo_endpoint", "")
+
+        if not jwks_uri or not userinfo_uri:
+            log.error(
+                "OIDC configuration incomplete",
+                jwks_uri=bool(jwks_uri),
+                userinfo_uri=bool(userinfo_uri),
+            )
+            raise SystemExit("OIDC requires both jwks_uri and userinfo_endpoint")
+
+        app.state.oidc_provider = OIDCProvider(
+            jwks_uri=jwks_uri,
+            userinfo_uri=userinfo_uri,
+            http_client=app.state.oidc_http_client,
+            cache_lifespan=settings.oidc_jwks_cache_lifespan,
+            userinfo_cache_ttl=settings.oidc_userinfo_cache_ttl,
+        )
+        log.info(
+            "OIDC authentication enabled",
+            issuer=settings.oidc_issuer,
+            audience=settings.oidc_audience,
+            jwks_uri=jwks_uri,
+            userinfo_uri=userinfo_uri,
+        )
+    else:
+        app.state.oidc_provider = None
+        app.state.oidc_http_client = None
+
+    if settings.auth_enabled:
+        methods = []
+        if settings.oidc_issuer:
+            methods.append("OIDC")
+        if settings.mtls_header:
+            methods.append(f"mTLS (header: {settings.mtls_header})")
+        log.info("Authentication enabled", methods=methods)
+    else:
+        log.info("Authentication disabled")
+
     yield
 
     await app.state.http_client.aclose()
+    if app.state.oidc_http_client:
+        await app.state.oidc_http_client.aclose()
     log.info("Application shutdown")
 
 
@@ -195,10 +250,11 @@ app = FastAPI(
     root_path=settings.root_path,
 )
 
-app.include_router(topologies.router)
-app.include_router(switching_services.router)
-app.include_router(stps.router)
-app.include_router(sdps.router)
+_auth_deps = [Depends(get_authenticated_user)]
+app.include_router(topologies.router, dependencies=_auth_deps)
+app.include_router(switching_services.router, dependencies=_auth_deps)
+app.include_router(stps.router, dependencies=_auth_deps)
+app.include_router(sdps.router, dependencies=_auth_deps)
 
 
 # ---------------------------------------------------------------------------

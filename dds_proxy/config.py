@@ -11,8 +11,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+import json
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,6 +36,32 @@ class Settings(BaseSettings):
     dds_proxy_host: str = "localhost"
     dds_proxy_port: int = 8000
     root_path: str = ""
+
+    auth_enabled: bool = False
+    mtls_header: str = ""
+    oidc_issuer: str = ""
+    oidc_audience: str = ""
+    oidc_jwks_uri: str = ""
+    oidc_userinfo_uri: str = ""
+    oidc_group_claim: str = "eduperson_entitlement"
+    oidc_required_groups: list[str] = []
+    oidc_jwks_cache_lifespan: int = 300
+    oidc_userinfo_cache_ttl: int = 60
+
+    @field_validator("oidc_required_groups", mode="before")
+    @classmethod
+    def parse_comma_separated_groups(cls, v: object) -> object:
+        """Accept both JSON arrays and comma-separated strings."""
+        if not isinstance(v, str):
+            return v
+        if not v:
+            return []
+        if v.startswith("["):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"Invalid JSON in OIDC_REQUIRED_GROUPS: {e}") from e
+        return [g.strip() for g in v.split(",") if g.strip()]
 
     model_config = SettingsConfigDict(env_file="dds_proxy.env", env_file_encoding="utf-8")
 
