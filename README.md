@@ -363,6 +363,8 @@ and install with:
 helm upgrade --install --namespace development --values values.yaml nsi-dds-proxy chart
 ```
 
+The chart also exposes an `envFromSecret` value that binds individual environment variables to keys of an existing Kubernetes Secret (entries with an empty `secretName` are skipped, so the list can be safely templated per environment).
+
 ```yaml
 image:
   pullPolicy: IfNotPresent
