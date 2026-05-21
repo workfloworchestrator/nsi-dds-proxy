@@ -199,25 +199,54 @@ def test_401_response_advertises_bearer_scheme() -> None:
         assert resp.headers.get("www-authenticate") == "Bearer"
 
 
+@pytest.mark.parametrize("path", ["/openapi.json", "/docs", "/redoc"])
 @pytest.mark.parametrize(
-    ("auth_enabled", "path", "expected_status"),
+    ("auth_enabled", "headers", "required_groups", "expected_status"),
     [
-        pytest.param(True, "/openapi.json", 404, id="openapi-hidden-with-auth"),
-        pytest.param(True, "/docs", 404, id="docs-hidden-with-auth"),
-        pytest.param(True, "/redoc", 404, id="redoc-hidden-with-auth"),
-        pytest.param(False, "/openapi.json", 200, id="openapi-served-without-auth"),
-        pytest.param(False, "/docs", 200, id="docs-served-without-auth"),
-        pytest.param(False, "/redoc", 200, id="redoc-served-without-auth"),
+        pytest.param(False, {}, [], 200, id="auth-disabled-served-to-everyone"),
+        pytest.param(True, {}, [], 401, id="auth-enabled-no-identity"),
+        pytest.param(
+            True,
+            {"X-Auth-Request-Email": "alice@example.org"},
+            [],
+            200,
+            id="auth-enabled-authenticated-no-groups-required",
+        ),
+        pytest.param(
+            True,
+            {"X-Auth-Request-Email": "alice@example.org", "X-Auth-Request-Groups": "developer"},
+            ["developer"],
+            200,
+            id="auth-enabled-group-match",
+        ),
+        pytest.param(
+            True,
+            {"X-Auth-Request-Email": "alice@example.org", "X-Auth-Request-Groups": "viewer"},
+            ["developer"],
+            403,
+            id="auth-enabled-group-mismatch",
+        ),
     ],
 )
-def test_openapi_and_docs_exposure(auth_enabled: bool, path: str, expected_status: int) -> None:
+def test_openapi_and_docs_behind_auth(
+    path: str,
+    auth_enabled: bool,
+    headers: dict[str, str],
+    required_groups: list[str],
+    expected_status: int,
+) -> None:
     from dds_proxy.main import create_app
 
-    with patch.multiple("dds_proxy.main.settings", auth_enabled=auth_enabled):
+    with patch.multiple(
+        "dds_proxy.auth.settings",
+        auth_enabled=auth_enabled,
+        oidc_required_groups=required_groups,
+        mtls_header="",
+    ):
         scoped_app = create_app()
-    with TestClient(scoped_app, raise_server_exceptions=False) as client:
-        scoped_app.state.http_client = _mock_dds_http_client()
-        assert client.get(path).status_code == expected_status
+        with TestClient(scoped_app, raise_server_exceptions=False) as client:
+            scoped_app.state.http_client = _mock_dds_http_client()
+            assert client.get(path, headers=headers).status_code == expected_status
 
 
 def test_auth_disabled_lets_everything_through() -> None:

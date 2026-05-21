@@ -177,7 +177,7 @@ The application logs the authenticated identity and group membership for every r
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTH_ENABLED` | `false` | Enable authentication on all data endpoints. When `true`, every request must carry trusted identity headers (OIDC path) or the mTLS header. `/health` is always unauthenticated. |
+| `AUTH_ENABLED` | `false` | Enable authentication on the data endpoints and on `/openapi.json` / `/docs` / `/redoc`. When `true`, every request to these paths must carry trusted identity headers (OIDC path) or the mTLS header, and must satisfy `OIDC_REQUIRED_GROUPS` when set. `/health` is always unauthenticated. |
 | `MTLS_HEADER` | _(empty)_ | Header name that nsi-auth sets on successful validation (e.g. `X-Auth-Method`). When set and auth is enabled, the presence of this header counts as mTLS authentication. nsi-auth also sets `X-Client-DN`, which is logged for audit purposes. |
 | `OIDC_REQUIRED_GROUPS` | `[]` | Groups required for OIDC-authenticated access. Supports comma-separated (`g1,g2`) or JSON array (`["g1","g2"]`). Use `[]` for no group check (any authenticated user is allowed). Matched against the parsed `X-Auth-Request-Groups` header (comma- or whitespace-separated). **Note:** pydantic-settings JSON-parses `list` env vars, so an empty string will cause a startup error — always use `[]` instead. |
 

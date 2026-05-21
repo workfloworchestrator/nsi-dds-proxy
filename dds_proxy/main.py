@@ -20,7 +20,9 @@ from typing import AsyncIterator
 
 import httpx
 import structlog
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from dds_proxy.auth import get_authenticated_user
 from dds_proxy.config import settings
@@ -199,12 +201,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     """Build the FastAPI app.
 
-    When ``auth_enabled`` is true, the OpenAPI schema and the ``/docs`` /
-    ``/redoc`` UIs are not exposed: the proxy is a backend API behind an
-    authenticating gateway, and the surface is documented in the repository
-    rather than served by the running instance.
+    ``/openapi.json``, ``/docs``, and ``/redoc`` are served by explicit routes
+    that share the same authentication dependency as the data endpoints, so
+    they're available to authorised users and rejected with 401/403 otherwise.
+    FastAPI's built-in docs routes are disabled because they cannot be put
+    behind a ``Depends``.
     """
-    docs_enabled = not settings.auth_enabled
+    auth_deps = [Depends(get_authenticated_user)]
     fastapi_app = FastAPI(
         title="NSI DDS Proxy",
         description=(
@@ -215,11 +218,35 @@ def create_app() -> FastAPI:
         version=importlib.metadata.version("dds-proxy"),
         lifespan=lifespan,
         root_path=settings.root_path,
-        openapi_url="/openapi.json" if docs_enabled else None,
-        docs_url="/docs" if docs_enabled else None,
-        redoc_url="/redoc" if docs_enabled else None,
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
     )
-    auth_deps = [Depends(get_authenticated_user)]
+
+    @fastapi_app.get("/openapi.json", include_in_schema=False, dependencies=auth_deps)
+    async def openapi_endpoint(request: Request) -> JSONResponse:
+        schema = fastapi_app.openapi()
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        if root_path and "servers" not in schema:
+            schema["servers"] = [{"url": root_path}]
+        return JSONResponse(schema)
+
+    @fastapi_app.get("/docs", include_in_schema=False, dependencies=auth_deps)
+    async def swagger_ui(request: Request) -> HTMLResponse:
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        return get_swagger_ui_html(
+            openapi_url=root_path + "/openapi.json",
+            title=fastapi_app.title + " - Swagger UI",
+        )
+
+    @fastapi_app.get("/redoc", include_in_schema=False, dependencies=auth_deps)
+    async def redoc(request: Request) -> HTMLResponse:
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        return get_redoc_html(
+            openapi_url=root_path + "/openapi.json",
+            title=fastapi_app.title + " - ReDoc",
+        )
+
     fastapi_app.include_router(topologies.router, dependencies=auth_deps)
     fastapi_app.include_router(switching_services.router, dependencies=auth_deps)
     fastapi_app.include_router(stps.router, dependencies=auth_deps)

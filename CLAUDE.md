@@ -32,7 +32,7 @@ dds-proxy
 
 **FastAPI async application** with these layers:
 
-- **`main.py`** — App entry point. `create_app()` factory builds the FastAPI instance (hiding `/openapi.json`, `/docs`, `/redoc` when `AUTH_ENABLED=true`); lifespan creates the shared `httpx.AsyncClient` with mutual TLS for the upstream DDS; structlog logging setup; health check
+- **`main.py`** — App entry point. `create_app()` factory builds the FastAPI instance, replaces the built-in OpenAPI/docs/ReDoc routes with custom ones that sit behind the auth dependency (FastAPI's defaults cannot be put behind a `Depends`), and includes the data routers. Lifespan creates the shared `httpx.AsyncClient` with mutual TLS for the upstream DDS, plus structlog logging setup and the unprotected health check
 - **`config.py`** — Pydantic Settings loaded from env vars or `dds_proxy.env`
 - **`auth.py`** — Reads identity headers set by the edge proxy. The OIDC branch reads `X-Auth-Request-Email` (identity) and `X-Auth-Request-Groups` (group authorisation via set intersection against `OIDC_REQUIRED_GROUPS`). The mTLS branch accepts requests carrying the configured `MTLS_HEADER` (set by `nsi-auth` after cert verification) and logs `X-Client-DN` for audit. `get_authenticated_user` is the FastAPI dependency applied to all data routes via `include_router(dependencies=...)`
 - **`dds_client.py`** — Core logic: fetches DDS collection, filters for topology documents, decodes gzip+base64 content, parses NML XML with lxml namespace-aware XPath. Has an in-memory TTL cache. Four `fetch_*` functions each return a list of parsed Pydantic models
@@ -51,7 +51,7 @@ dds-proxy
 - Authentication is performed at the edge proxy (Traefik on the dev cluster) and the proxy trusts the resulting identity headers. Two routes converge on the same backend:
   - Portal route via oauth2-proxy: Traefik chains `ana-automation-ui-strip-auth-headers` (zeros inbound `X-Auth-Request-*`, `X-Auth-Method`, `X-Client-DN`, `Authorization` so clients can't self-attest) → `ana-automation-ui-oauth2` ForwardAuth → URL rewrite. oauth2-proxy is configured with `set_xauthrequest = true` and `oidc_groups_claim = "eduperson_entitlement"`; `authResponseHeaders` forwards `X-Auth-Request-User/Email/Groups`.
   - mTLS route via `nsi-auth`: `RequireAndVerifyClientCert` at the TLS layer, then `nsi-pass-tls` + `nsi-dds-proxy-auth` middlewares pass the cert PEM to the validate sidecar, which returns `X-Auth-Method` + `X-Client-DN`.
-- When `AUTH_ENABLED=true`, the OpenAPI schema and `/docs` / `/redoc` UIs are not exposed — the surface is documented in the repo, not served by the running instance. `/health` stays unauthenticated for k8s probes.
+- `/openapi.json`, `/docs`, and `/redoc` share the data endpoints' auth dependency: authenticated users in `OIDC_REQUIRED_GROUPS` get the UIs, unauthenticated requests get 401, and authenticated-but-out-of-group requests get 403. `/health` stays unauthenticated for k8s probes.
 - `OIDC_REQUIRED_GROUPS` must be `[]` (not empty string) when no groups are required — pydantic-settings JSON-parses `list[str]` env vars before field validators run, so `""` causes a startup crash.
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`
 
