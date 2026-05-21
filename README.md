@@ -77,11 +77,14 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 
 ### Authentication (optional)
 
-The DDS Proxy supports two authentication methods: **OIDC** (JWT from oauth2-proxy) and **mTLS** (header from auth subrequest service). Authentication is **disabled by default**. When enabled, every request to data endpoints must be authenticated via at least one method; requests without valid credentials are rejected with 401.
+The DDS Proxy authenticates requests by reading identity headers set by the edge proxy. Browser users authenticate at the portal via Traefik plus oauth2-proxy against an OIDC provider; machine clients authenticate via mutual TLS with an auth subrequest service that validates the certificate's DN. The proxy reads the resulting identity headers and applies an optional group check. Authentication is **disabled by default**; when enabled, requests that arrive without trusted identity headers are rejected with 401.
 
 #### Architecture
 
-Two separate nginx ingresses protect the DDS Proxy API — one for **mTLS** (machine clients) and one for **OIDC** (browser users). Both converge on the same dds-proxy instance, which performs a final authentication check before serving data.
+Two separate Traefik routes converge on the same dds-proxy instance:
+
+- A **portal route** at `automation.nsi.dev.automation.surf.net/dds-proxy` that chains a Headers middleware (stripping inbound auth headers so clients can't self-attest), a ForwardAuth middleware to oauth2-proxy, and a URL-rewrite filter.
+- An **mTLS IngressRoute** at `dds-proxy.dev.automation.surf.net` that enforces `RequireAndVerifyClientCert`, runs the `nsi-pass-tls` middleware to forward the cert, and chains the `nsi-dds-proxy-auth` ForwardAuth middleware to the `nsi-auth` validate sidecar.
 
 ```mermaid
 flowchart TB
@@ -96,115 +99,100 @@ flowchart TB
     Browser(["Browser User"]):::client
     SRAM["SRAM IdP\n(OIDC Provider)"]:::external
 
-    subgraph mTLS_Path["mTLS Ingress — nsi-dds-proxy"]
+    subgraph mTLS_Route["Traefik IngressRoute — dds-proxy.dev.automation.surf.net"]
         direction TB
-        mNginx["nginx ingress controller\n\nauth-tls-verify-client: on\nauth-tls-secret: nsi-auth CA\nauth-url: nsi-auth /validate\nauth-response-headers:\n  X-Auth-Method, X-Client-DN"]:::ingress
+        mTraefik["TLSOption: RequireAndVerifyClientCert\nMiddlewares:\n  nsi-pass-tls (forwards cert PEM)\n  nsi-dds-proxy-auth (ForwardAuth → nsi-auth /validate)\nauthResponseHeaders:\n  X-Auth-Method, X-Client-DN"]:::ingress
     end
 
-    subgraph OIDC_Path["OIDC Ingress — ana-automation-ui"]
+    subgraph Portal_Route["Traefik HTTPRoute — automation.nsi.dev.automation.surf.net/dds-proxy"]
         direction TB
-        oNginx["nginx ingress controller\n\nauth-url: oauth2-proxy /oauth2/auth\nauth-response-headers:\n  Authorization,\n  X-Auth-Request-Access-Token\nconfiguration-snippet:\n  proxy_set_header X-Auth-Method \"\""]:::ingress
-        Portal["ana-automation-ui\n(portal landing page)"]:::appsvc
-        BackendIngress["Backend ingresses\n/dds-proxy/* /aggregator-proxy/* ..."]:::ingress
-        oNginx --> Portal
-        Portal --> BackendIngress
+        oTraefik["Middlewares (in order):\n  ana-automation-ui-strip-auth-headers (Headers — zero inbound X-Auth-Request-*, X-Auth-Method, Authorization)\n  ana-automation-ui-oauth2-signin (errors → /oauth2/start)\n  ana-automation-ui-oauth2 (ForwardAuth → oauth2-proxy)\nURLRewrite: /dds-proxy → /\nauthResponseHeaders:\n  X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Groups"]:::ingress
     end
 
     subgraph Auth_Services["Auth Services"]
         nsiAuth["nsi-auth\n\nValidates client DN\nagainst allowed list"]:::authsvc
-        OAuth2["oauth2-proxy\n\nManages OIDC session\npass_access_token = true\nset_xauthrequest = true"]:::authsvc
+        OAuth2["oauth2-proxy\n\nManages OIDC session\nset_xauthrequest = true\noidc_groups_claim = eduperson_entitlement"]:::authsvc
     end
 
-    NSI -->|"TLS handshake\n+ client certificate"| mNginx
-    Browser -->|"HTTPS\n+ session cookie"| oNginx
+    NSI -->|"TLS handshake\n+ client certificate"| mTraefik
+    Browser -->|"HTTPS\n+ session cookie"| oTraefik
 
-    mNginx -.->|"auth subrequest\n(DN from ssl-client-subject-dn)"| nsiAuth
-    nsiAuth -.->|"200 OK\nX-Auth-Method: mTLS\nX-Client-DN: CN=..."| mNginx
+    mTraefik -.->|"auth subrequest\n(X-Forwarded-Tls-Client-Cert)"| nsiAuth
+    nsiAuth -.->|"200 OK\nX-Auth-Method: mTLS\nX-Client-DN: CN=..."| mTraefik
 
-    oNginx -.->|"auth subrequest"| OAuth2
-    OAuth2 -.->|"200 OK\nAuthorization: Bearer JWT\nX-Auth-Request-Access-Token: ..."| oNginx
+    oTraefik -.->|"auth subrequest"| OAuth2
+    OAuth2 -.->|"200 OK\nX-Auth-Request-Email: ...\nX-Auth-Request-Groups: ..."| oTraefik
     OAuth2 <-.->|"OIDC login\n+ token refresh"| SRAM
 
     subgraph DDS_Proxy["dds-proxy (AUTH_ENABLED=true)"]
         direction TB
         AuthCheck{"get_authenticated_user"}:::decision
-        OIDC_Check["OIDC path\n\nJWT in Authorization or\nX-Auth-Request-Access-Token?\n→ Validate signature, issuer,\n   audience, expiry\n→ Check group membership\n   via userinfo endpoint"]:::appsvc
-        mTLS_Check["mTLS path\n\nX-Auth-Method header present?\n→ Log X-Client-DN for audit"]:::appsvc
+        OIDC_Check["OIDC path\n\nX-Auth-Request-Email present?\n→ Parse X-Auth-Request-Groups\n→ Check OIDC_REQUIRED_GROUPS\n   (set intersection)"]:::appsvc
+        mTLS_Check["mTLS path\n\nMTLS_HEADER present?\n→ Log X-Client-DN for audit"]:::appsvc
         OK(["200 — Serve data"]):::appsvc
-        Reject(["401 — Unauthorized"]):::client
+        Reject(["401 / 403"]):::client
 
-        AuthCheck -->|"JWT present"| OIDC_Check
-        AuthCheck -->|"No JWT"| mTLS_Check
-        OIDC_Check -->|"Valid"| OK
-        OIDC_Check -->|"Invalid JWT"| Reject
+        AuthCheck -->|"Email header set"| OIDC_Check
+        AuthCheck -->|"No email"| mTLS_Check
+        OIDC_Check -->|"Group match\nor no groups required"| OK
+        OIDC_Check -->|"Group mismatch"| Reject
         mTLS_Check -->|"Header set"| OK
         mTLS_Check -->|"No header"| Reject
     end
 
-    mNginx -->|"X-Auth-Method: mTLS\nX-Client-DN: CN=..."| AuthCheck
-    BackendIngress -->|"Authorization: Bearer JWT\nX-Auth-Request-Access-Token: ...\n(X-Auth-Method stripped)"| AuthCheck
+    mTraefik -->|"X-Auth-Method, X-Client-DN"| AuthCheck
+    oTraefik -->|"X-Auth-Request-Email, X-Auth-Request-Groups"| AuthCheck
 ```
+
+#### Trust model
+
+Authentication is performed at the edge; the proxy trusts the identity headers it receives. The cluster manifests must uphold the following invariants for that trust to hold:
+
+- The portal HTTPRoute runs the `ana-automation-ui-strip-auth-headers` middleware **before** the ForwardAuth middleware, so a client cannot pre-set `X-Auth-Request-Email` / `-Groups` / `-Method`.
+- The dds-proxy backend Service is `ClusterIP` and reachable only via the portal HTTPRoute or the mTLS IngressRoute.
+- The mTLS route enforces `RequireAndVerifyClientCert` at the TLS layer.
+
+The application logs the authenticated identity and group membership for every request to support audit.
 
 #### Defense-in-depth measures
 
 | Measure | Purpose |
 |---|---|
-| **mTLS ingress verifies client cert** against CA chain before reaching nsi-auth | Only certificates signed by a trusted CA are accepted |
+| **mTLS route enforces `RequireAndVerifyClientCert`** before nsi-auth runs | Only certificates signed by a trusted CA reach the auth service |
 | **nsi-auth validates DN** against an allowed list | Even with a valid cert, only pre-approved clients are authorized |
-| **OIDC ingress strips `X-Auth-Method`** header via `configuration-snippet` | Prevents browser users from spoofing mTLS authentication by injecting the header |
-| **Invalid JWT blocks request** even when `X-Auth-Method` is present | A bad JWT is always rejected — mTLS cannot rescue a failed OIDC attempt |
-| **dds-proxy requires at least one method** when `AUTH_ENABLED=true` | No unauthenticated passthrough — every request must prove its identity |
-| **Group-based authorization** via OIDC userinfo endpoint | OIDC users can be restricted to specific SRAM groups |
+| **Portal route's strip-auth-headers middleware** zeroes inbound `X-Auth-Request-*`, `X-Auth-Method`, and `Authorization` | Clients cannot self-attest by pre-setting trusted headers |
+| **Network isolation** (backend Services are ClusterIP only) | Direct in-cluster access to backends is required to bypass the edge — close that off with a NetworkPolicy when the cluster is multi-tenant |
+| **`/health` is always unauthenticated** | k8s liveness/readiness probes succeed without credentials |
 
 #### Header flow summary
 
 | Header | Set by | Forwarded by | Consumed by |
 |---|---|---|---|
-| `X-Auth-Method: mTLS` | nsi-auth (on 200) | mTLS nginx (`auth-response-headers`) | dds-proxy (mTLS auth check) |
-| `X-Client-DN` | nsi-auth (on 200) | mTLS nginx (`auth-response-headers`) | dds-proxy (audit logging) |
-| `Authorization: Bearer <JWT>` | oauth2-proxy | OIDC nginx (`auth-response-headers`) | dds-proxy (OIDC auth check) |
-| `X-Auth-Request-Access-Token` | oauth2-proxy | OIDC nginx (`auth-response-headers`) | dds-proxy (JWT fallback + userinfo lookup) |
+| `X-Auth-Method` | nsi-auth (on 200) | Traefik IngressRoute (`authResponseHeaders`) | dds-proxy (mTLS auth check) |
+| `X-Client-DN` | nsi-auth (on 200) | Traefik IngressRoute (`authResponseHeaders`) | dds-proxy (audit logging) |
+| `X-Auth-Request-Email` | oauth2-proxy (`set_xauthrequest = true`) | Traefik HTTPRoute (`authResponseHeaders`) | dds-proxy (identity) |
+| `X-Auth-Request-Groups` | oauth2-proxy (`set_xauthrequest = true`, `oidc_groups_claim = eduperson_entitlement`) | Traefik HTTPRoute (`authResponseHeaders`) | dds-proxy (group authorization) |
 
 #### Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `AUTH_ENABLED` | `false` | Enable authentication on all data endpoints. When `true`, every request must be authenticated via OIDC (JWT) or mTLS (header from auth service). `/health` is always unauthenticated. Replaces the former `OIDC_ENABLED`. |
-| `MTLS_HEADER` | _(empty)_ | Header name that nsi-auth sets on successful validation (e.g. `X-Auth-Method`). When set and auth is enabled, the presence of this header counts as mTLS authentication. nsi-auth also sets `X-Client-DN` with the client certificate DN, which is logged for audit purposes. |
-| `OIDC_ISSUER` | _(empty)_ | Expected `iss` claim in the JWT (e.g. `https://connect.test.surfconext.nl`). OIDC validation is active when this is set and auth is enabled. |
-| `OIDC_AUDIENCE` | _(empty)_ | Expected `aud` claim in the JWT (e.g. `demo.pilot1.sram.surf.nl`). |
-| `OIDC_JWKS_URI` | _(empty)_ | JWKS endpoint URL. Auto-discovered from `{OIDC_ISSUER}/.well-known/openid-configuration` if empty. |
-| `OIDC_USERINFO_URI` | _(empty)_ | Userinfo endpoint URL. Auto-discovered from the OIDC configuration if empty. |
-| `OIDC_GROUP_CLAIM` | `eduperson_entitlement` | Claim name in the userinfo response that contains group memberships. |
-| `OIDC_REQUIRED_GROUPS` | `[]` | Groups required for access. Supports comma-separated (`g1,g2`) or JSON array (`["g1","g2"]`). Use `[]` for no group check (any authenticated user is allowed). **Note:** pydantic-settings JSON-parses `list` env vars, so an empty string will cause a startup error — always use `[]` instead. |
-| `OIDC_JWKS_CACHE_LIFESPAN` | `300` | JWKS key cache TTL in seconds. |
-| `OIDC_USERINFO_CACHE_TTL` | `60` | Userinfo response cache TTL in seconds. |
+| `AUTH_ENABLED` | `false` | Enable authentication on all data endpoints. When `true`, every request must carry trusted identity headers (OIDC path) or the mTLS header. `/health` is always unauthenticated. |
+| `MTLS_HEADER` | _(empty)_ | Header name that nsi-auth sets on successful validation (e.g. `X-Auth-Method`). When set and auth is enabled, the presence of this header counts as mTLS authentication. nsi-auth also sets `X-Client-DN`, which is logged for audit purposes. |
+| `OIDC_REQUIRED_GROUPS` | `[]` | Groups required for OIDC-authenticated access. Supports comma-separated (`g1,g2`) or JSON array (`["g1","g2"]`). Use `[]` for no group check (any authenticated user is allowed). Matched against the parsed `X-Auth-Request-Groups` header (comma- or whitespace-separated). **Note:** pydantic-settings JSON-parses `list` env vars, so an empty string will cause a startup error — always use `[]` instead. |
 
 **Authentication flow** when `AUTH_ENABLED=true`:
 
-1. **OIDC path** (if `OIDC_ISSUER` is set): Check for a JWT in the `Authorization: Bearer` header, falling back to `X-Auth-Request-Access-Token` (set by oauth2-proxy). If a token is present, validate it for signature, issuer, audience, and expiry. The `X-Auth-Request-Access-Token` fallback is needed because the nginx ingress controller has a [known issue](https://github.com/kubernetes/ingress-nginx/issues/13163) where it clears the `Authorization` header from auth subrequest responses. If a token is present but invalid, the request is rejected (mTLS does not override a bad JWT).
-2. **mTLS path** (if `MTLS_HEADER` is set): Check for the configured header (e.g. `X-Auth-Method`). This header is set by the mTLS auth subrequest service (nsi-auth) and forwarded by nginx via `auth-response-headers`. The client certificate DN from `X-Client-DN` is logged for audit.
-3. **Neither**: If no valid credentials are found, the request is rejected with 401.
-
-**Access token for group authorization:** When `OIDC_REQUIRED_GROUPS` is set, the proxy needs an access token (via `X-Auth-Request-Access-Token`) to call the OIDC userinfo endpoint for group membership. This header is set by oauth2-proxy when `set_xauthrequest = true` and `pass_access_token = true`. If a valid JWT is present but the access token header is missing, the request is rejected with 401.
+1. **OIDC path**: If `X-Auth-Request-Email` is present, the request is authenticated. If `OIDC_REQUIRED_GROUPS` is non-empty, the user's `X-Auth-Request-Groups` must intersect with the required groups; otherwise 403.
+2. **mTLS path** (if `MTLS_HEADER` is set): If the configured header is present, the request is authenticated. The client certificate DN from `X-Client-DN` is logged for audit.
+3. **Neither**: If no trusted identity is present, the request is rejected with 401.
 
 #### Error responses
 
-When authentication is enabled, data endpoints may return these error responses:
-
 | Status | Detail | Cause |
 |---|---|---|
-| `401` | `Token expired` | JWT `exp` claim is in the past |
-| `401` | `Invalid audience` | JWT `aud` claim does not match `OIDC_AUDIENCE` |
-| `401` | `Invalid issuer` | JWT `iss` claim does not match `OIDC_ISSUER` |
-| `401` | `Invalid token: <reason>` | Other JWT validation failures (missing required claims, bad signature, etc.) |
-| `401` | `Token validation failed` | JWKS key retrieval failed (endpoint unreachable, key not found) |
-| `401` | `Missing access token for group lookup` | Group authorization required but `X-Auth-Request-Access-Token` header missing |
-| `401` | `Authentication required` | No valid credentials found (no JWT, no mTLS header) |
+| `401` | `Authentication required` | No trusted identity headers and no mTLS header found |
 | `403` | `Insufficient group membership` | User not in any of the required groups |
-| `502` | `Failed to fetch user information` | Userinfo endpoint unreachable or returned an error |
-
-**Defense-in-depth:** The OIDC ingress should strip the `X-Auth-Method` header to prevent clients from spoofing mTLS authentication. With nginx, use `configuration-snippet: proxy_set_header X-Auth-Method "";`. With Traefik, use a Headers middleware with `customRequestHeaders: { X-Auth-Method: "" }`.
 
 A ready-to-use template is provided in `dds_proxy.env`. The application automatically reads this file from the working directory when it starts, so in most cases you only need to edit it in place.
 

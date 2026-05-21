@@ -18,7 +18,7 @@ Swagger UI can find the OpenAPI spec when served behind a reverse proxy
 with a path prefix (e.g. /dds-proxy).
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -29,16 +29,10 @@ from tests.conftest import SIMPLE_COLLECTION
 
 def make_app(root_path: str) -> FastAPI:
     """Create a fresh FastAPI app with the given root_path and the dds-proxy routes."""
-    from dds_proxy.main import health, lifespan
-    from dds_proxy.routers import sdps, stps, switching_services, topologies
+    from dds_proxy.main import create_app
 
-    new_app = FastAPI(root_path=root_path, lifespan=lifespan)
-    new_app.include_router(topologies.router)
-    new_app.include_router(switching_services.router)
-    new_app.include_router(stps.router)
-    new_app.include_router(sdps.router)
-    new_app.get("/health", tags=["meta"])(health)
-    return new_app
+    with patch.multiple("dds_proxy.main.settings", root_path=root_path, auth_enabled=False):
+        return create_app()
 
 
 def make_test_client(application: FastAPI) -> TestClient:

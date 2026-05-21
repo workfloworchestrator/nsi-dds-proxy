@@ -22,7 +22,7 @@ import httpx
 import structlog
 from fastapi import Depends, FastAPI
 
-from dds_proxy.auth import OIDCProvider, get_authenticated_user
+from dds_proxy.auth import get_authenticated_user
 from dds_proxy.config import settings
 from dds_proxy.routers import sdps, stps, switching_services, topologies
 
@@ -176,61 +176,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         timeout=settings.http_timeout_seconds,
     )
 
-    if settings.auth_enabled and settings.oidc_issuer:
-        app.state.oidc_http_client = httpx.AsyncClient()
-        jwks_uri = settings.oidc_jwks_uri
-        userinfo_uri = settings.oidc_userinfo_uri
-
-        if not jwks_uri or not userinfo_uri:
-            oidc_config_url = f"{settings.oidc_issuer.rstrip('/')}/.well-known/openid-configuration"
-            log.info("Discovering OIDC configuration", url=oidc_config_url)
-            resp = await app.state.oidc_http_client.get(oidc_config_url)
-            resp.raise_for_status()
-            oidc_config = resp.json()
-            jwks_uri = jwks_uri or oidc_config.get("jwks_uri", "")
-            userinfo_uri = userinfo_uri or oidc_config.get("userinfo_endpoint", "")
-
-        if not jwks_uri or not userinfo_uri:
-            log.error(
-                "OIDC configuration incomplete",
-                jwks_uri=bool(jwks_uri),
-                userinfo_uri=bool(userinfo_uri),
-            )
-            raise SystemExit("OIDC requires both jwks_uri and userinfo_endpoint")
-
-        app.state.oidc_provider = OIDCProvider(
-            jwks_uri=jwks_uri,
-            userinfo_uri=userinfo_uri,
-            http_client=app.state.oidc_http_client,
-            cache_lifespan=settings.oidc_jwks_cache_lifespan,
-            userinfo_cache_ttl=settings.oidc_userinfo_cache_ttl,
-        )
-        log.info(
-            "OIDC authentication enabled",
-            issuer=settings.oidc_issuer,
-            audience=settings.oidc_audience,
-            jwks_uri=jwks_uri,
-            userinfo_uri=userinfo_uri,
-        )
-    else:
-        app.state.oidc_provider = None
-        app.state.oidc_http_client = None
-
     if settings.auth_enabled:
-        methods = []
-        if settings.oidc_issuer:
-            methods.append("OIDC")
-        if settings.mtls_header:
-            methods.append(f"mTLS (header: {settings.mtls_header})")
-        log.info("Authentication enabled", methods=methods)
+        log.info(
+            "Authentication enabled",
+            mtls_header=settings.mtls_header or None,
+            required_groups=settings.oidc_required_groups,
+        )
     else:
         log.info("Authentication disabled")
 
     yield
 
     await app.state.http_client.aclose()
-    if app.state.oidc_http_client:
-        await app.state.oidc_http_client.aclose()
     log.info("Application shutdown")
 
 
@@ -238,34 +195,45 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 # App
 # ---------------------------------------------------------------------------
 
-app = FastAPI(
-    title="NSI DDS Proxy",
-    description=(
-        "REST proxy for the NSI Document Distribution Service. "
-        "Returns topologies, switching services, STPs, and SDPs "
-        "extracted from DDS topology documents."
-    ),
-    version=importlib.metadata.version("dds-proxy"),
-    lifespan=lifespan,
-    root_path=settings.root_path,
-)
 
-_auth_deps = [Depends(get_authenticated_user)]
-app.include_router(topologies.router, dependencies=_auth_deps)
-app.include_router(switching_services.router, dependencies=_auth_deps)
-app.include_router(stps.router, dependencies=_auth_deps)
-app.include_router(sdps.router, dependencies=_auth_deps)
+def create_app() -> FastAPI:
+    """Build the FastAPI app.
+
+    When ``auth_enabled`` is true, the OpenAPI schema and the ``/docs`` /
+    ``/redoc`` UIs are not exposed: the proxy is a backend API behind an
+    authenticating gateway, and the surface is documented in the repository
+    rather than served by the running instance.
+    """
+    docs_enabled = not settings.auth_enabled
+    fastapi_app = FastAPI(
+        title="NSI DDS Proxy",
+        description=(
+            "REST proxy for the NSI Document Distribution Service. "
+            "Returns topologies, switching services, STPs, and SDPs "
+            "extracted from DDS topology documents."
+        ),
+        version=importlib.metadata.version("dds-proxy"),
+        lifespan=lifespan,
+        root_path=settings.root_path,
+        openapi_url="/openapi.json" if docs_enabled else None,
+        docs_url="/docs" if docs_enabled else None,
+        redoc_url="/redoc" if docs_enabled else None,
+    )
+    auth_deps = [Depends(get_authenticated_user)]
+    fastapi_app.include_router(topologies.router, dependencies=auth_deps)
+    fastapi_app.include_router(switching_services.router, dependencies=auth_deps)
+    fastapi_app.include_router(stps.router, dependencies=auth_deps)
+    fastapi_app.include_router(sdps.router, dependencies=auth_deps)
+
+    @fastapi_app.get("/health", tags=["meta"])
+    async def health() -> dict:
+        """Quick liveness check — useful for load balancers and k8s probes."""
+        return {"status": "ok"}
+
+    return fastapi_app
 
 
-# ---------------------------------------------------------------------------
-# Health check
-# ---------------------------------------------------------------------------
-
-
-@app.get("/health", tags=["meta"])
-async def health() -> dict:
-    """Quick liveness check — useful for load balancers and k8s probes."""
-    return {"status": "ok"}
+app = create_app()
 
 
 # ---------------------------------------------------------------------------

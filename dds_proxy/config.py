@@ -39,14 +39,7 @@ class Settings(BaseSettings):
 
     auth_enabled: bool = False
     mtls_header: str = ""
-    oidc_issuer: str = ""
-    oidc_audience: str = ""
-    oidc_jwks_uri: str = ""
-    oidc_userinfo_uri: str = ""
-    oidc_group_claim: str = "eduperson_entitlement"
     oidc_required_groups: list[str] = []
-    oidc_jwks_cache_lifespan: int = 300
-    oidc_userinfo_cache_ttl: int = 60
 
     @field_validator("oidc_required_groups", mode="before")
     @classmethod
