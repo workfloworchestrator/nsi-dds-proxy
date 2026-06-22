@@ -244,5 +244,5 @@ SIMPLE_COLLECTION = make_dds_collection(
 @pytest.fixture(autouse=True)
 def clear_cache():
     """Ensure every test starts with an empty DDS cache."""
-    with patch.dict(dds_client._cache, {}, clear=True):
+    with patch.object(dds_client, "_cache", None):
         yield

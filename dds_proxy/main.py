@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from dds_proxy.auth import get_authenticated_user
 from dds_proxy.config import settings
-from dds_proxy.routers import sdps, stps, switching_services, topologies
+from dds_proxy.routers import router
 
 # ---------------------------------------------------------------------------
 # structlog configuration
@@ -247,10 +247,7 @@ def create_app() -> FastAPI:
             title=fastapi_app.title + " - ReDoc",
         )
 
-    fastapi_app.include_router(topologies.router, dependencies=auth_deps)
-    fastapi_app.include_router(switching_services.router, dependencies=auth_deps)
-    fastapi_app.include_router(stps.router, dependencies=auth_deps)
-    fastapi_app.include_router(sdps.router, dependencies=auth_deps)
+    fastapi_app.include_router(router, dependencies=auth_deps)
 
     @fastapi_app.get("/health", tags=["meta"])
     async def health() -> dict:

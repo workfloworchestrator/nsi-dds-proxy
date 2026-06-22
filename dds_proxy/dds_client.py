@@ -64,26 +64,27 @@ HAS_PORT_TYPES = {HAS_INBOUND_PORT, HAS_OUTBOUND_PORT}
 
 TopologyDocuments = list[tuple[etree._Element, etree._Element]]
 
-_cache: dict[str, tuple[float, TopologyDocuments]] = {}
+# Single-slot TTL cache: the proxy only ever caches the topology documents.
+_cache: tuple[float, TopologyDocuments] | None = None
 
 
-def _cache_get(key: str) -> TopologyDocuments | None:
-    if key not in _cache:
+def _cache_get() -> TopologyDocuments | None:
+    if _cache is None:
         return None
-    ts, data = _cache[key]
+    ts, data = _cache
     ttl = settings.cache_ttl_seconds
     age = time.monotonic() - ts
     if age > ttl:
-        log.debug("Cache expired", key=key, age_seconds=round(age, 1), ttl=ttl)
-        del _cache[key]
+        log.debug("Cache expired", age_seconds=round(age, 1), ttl=ttl)
         return None
-    log.debug("Cache hit", key=key, age_seconds=round(age, 1), ttl=ttl)
+    log.debug("Cache hit", age_seconds=round(age, 1), ttl=ttl)
     return data
 
 
-def _cache_set(key: str, data: TopologyDocuments) -> None:
-    _cache[key] = (time.monotonic(), data)
-    log.debug("Cache set", key=key)
+def _cache_set(data: TopologyDocuments) -> None:
+    global _cache
+    _cache = (time.monotonic(), data)
+    log.debug("Cache set")
 
 
 # ---------------------------------------------------------------------------
@@ -110,7 +111,7 @@ async def _get_topology_documents(
     client: httpx.AsyncClient,
     dds_base_url: str,
 ) -> list[tuple[etree._Element, etree._Element]]:
-    cached = _cache_get("topology_documents")
+    cached = _cache_get()
     if cached is not None:
         log.debug("DDS topology documents from cache", count=len(cached))
         return cached
@@ -160,7 +161,7 @@ async def _get_topology_documents(
             log.warning("DDS document decode failed", doc_id=doc_id, error=str(exc))
 
     log.debug("DDS topology documents ready", count=len(results))
-    _cache_set("topology_documents", results)
+    _cache_set(results)
     return results
 
 

@@ -37,7 +37,7 @@ dds-proxy
 - **`auth.py`** — Reads identity headers set by the edge proxy. The OIDC branch reads `X-Auth-Request-Email` (identity) and `X-Auth-Request-Groups` (group authorisation via set intersection against `OIDC_REQUIRED_GROUPS`). The mTLS branch accepts requests carrying the configured `MTLS_HEADER` (set by `nsi-auth` after cert verification) and logs `X-Client-DN` for audit. `get_authenticated_user` is the FastAPI dependency applied to all data routes via `include_router(dependencies=...)`
 - **`dds_client.py`** — Core logic: fetches DDS collection, filters for topology documents, decodes gzip+base64 content, parses NML XML with lxml namespace-aware XPath. Has an in-memory TTL cache. Four `fetch_*` functions each return a list of parsed Pydantic models
 - **`models.py`** — Pydantic models (Topology, SwitchingService, ServiceTerminationPoint, ServiceDemarcationPoint) with camelCase alias generators for JSON serialization
-- **`routers/`** — One thin router per endpoint, all return 502 on upstream DDS failures
+- **`routers.py`** — One `APIRouter` with four thin endpoints sharing a `_fetch_or_502` helper; all return 502 on upstream DDS failures
 
 **Endpoints**: `/topologies`, `/switching-services`, `/service-termination-points`, `/service-demarcation-points`, `/health`
 
