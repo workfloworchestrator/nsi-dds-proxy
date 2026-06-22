@@ -52,7 +52,7 @@ dds-proxy
   - Portal route via oauth2-proxy: Traefik chains `ana-automation-ui-strip-auth-headers` (zeros inbound `X-Auth-Request-*`, `X-Auth-Method`, `X-Client-DN`, `Authorization` so clients can't self-attest) → `ana-automation-ui-oauth2` ForwardAuth → URL rewrite. oauth2-proxy is configured with `set_xauthrequest = true` and `oidc_groups_claim = "eduperson_entitlement"`; `authResponseHeaders` forwards `X-Auth-Request-User/Email/Groups`.
   - mTLS route via `nsi-auth`: `RequireAndVerifyClientCert` at the TLS layer, then `nsi-pass-tls` + `nsi-dds-proxy-auth` middlewares pass the cert PEM to the validate sidecar, which returns `X-Auth-Method` + `X-Client-DN`.
 - `/openapi.json`, `/docs`, and `/redoc` share the data endpoints' auth dependency: authenticated users in `OIDC_REQUIRED_GROUPS` get the UIs, unauthenticated requests get 401, and authenticated-but-out-of-group requests get 403. `/health` stays unauthenticated for k8s probes.
-- `OIDC_REQUIRED_GROUPS` must be `[]` (not empty string) when no groups are required — pydantic-settings JSON-parses `list[str]` env vars before field validators run, so `""` causes a startup crash.
+- `OIDC_REQUIRED_GROUPS` is `Annotated[list[str], NoDecode]` so its `field_validator` runs on the raw env string: comma-separated, single value, JSON array, and empty (`-> []`) all work. Without `NoDecode`, pydantic-settings JSON-parses `list[str]` env vars before the validator, so anything but a JSON array (including `""`) crashes at startup.
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`
 
 ## Code Style
