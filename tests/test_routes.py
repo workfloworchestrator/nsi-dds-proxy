@@ -217,7 +217,7 @@ class TestSDPsRoute:
         mock_response.content = collection
         mock_response.raise_for_status = lambda: None
         mock_http.get = AsyncMock(return_value=mock_response)
-        dds_client._cache.clear()
+        dds_client._cache = None
 
         data = client.get("/service-demarcation-points").json()
         assert data == []

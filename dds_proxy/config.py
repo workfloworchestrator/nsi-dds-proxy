@@ -13,9 +13,10 @@
 #
 import json
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -39,12 +40,15 @@ class Settings(BaseSettings):
 
     auth_enabled: bool = False
     mtls_header: str = ""
-    oidc_required_groups: list[str] = []
+    # NoDecode suppresses pydantic-settings' pre-validator JSON decode so the
+    # raw env string reaches the validator below — otherwise comma-separated and
+    # empty values crash before it runs. See parse_comma_separated_groups.
+    oidc_required_groups: Annotated[list[str], NoDecode] = []
 
     @field_validator("oidc_required_groups", mode="before")
     @classmethod
     def parse_comma_separated_groups(cls, v: object) -> object:
-        """Accept both JSON arrays and comma-separated strings."""
+        """Accept JSON arrays, comma-separated strings, a single value, or empty (-> [])."""
         if not isinstance(v, str):
             return v
         if not v:

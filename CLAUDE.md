@@ -37,7 +37,7 @@ dds-proxy
 - **`auth.py`** — Reads identity headers set by the edge proxy. The OIDC branch reads `X-Auth-Request-Email` (identity) and `X-Auth-Request-Groups` (group authorisation via set intersection against `OIDC_REQUIRED_GROUPS`). The mTLS branch accepts requests carrying the configured `MTLS_HEADER` (set by `nsi-auth` after cert verification) and logs `X-Client-DN` for audit. `get_authenticated_user` is the FastAPI dependency applied to all data routes via `include_router(dependencies=...)`
 - **`dds_client.py`** — Core logic: fetches DDS collection, filters for topology documents, decodes gzip+base64 content, parses NML XML with lxml namespace-aware XPath. Has an in-memory TTL cache. Four `fetch_*` functions each return a list of parsed Pydantic models
 - **`models.py`** — Pydantic models (Topology, SwitchingService, ServiceTerminationPoint, ServiceDemarcationPoint) with camelCase alias generators for JSON serialization
-- **`routers/`** — One thin router per endpoint, all return 502 on upstream DDS failures
+- **`routers.py`** — One `APIRouter` with four thin endpoints sharing a `_fetch_or_502` helper; all return 502 on upstream DDS failures
 
 **Endpoints**: `/topologies`, `/switching-services`, `/service-termination-points`, `/service-demarcation-points`, `/health`
 
@@ -52,7 +52,7 @@ dds-proxy
   - Portal route via oauth2-proxy: Traefik chains `ana-automation-ui-strip-auth-headers` (zeros inbound `X-Auth-Request-*`, `X-Auth-Method`, `X-Client-DN`, `Authorization` so clients can't self-attest) → `ana-automation-ui-oauth2` ForwardAuth → URL rewrite. oauth2-proxy is configured with `set_xauthrequest = true` and `oidc_groups_claim = "eduperson_entitlement"`; `authResponseHeaders` forwards `X-Auth-Request-User/Email/Groups`.
   - mTLS route via `nsi-auth`: `RequireAndVerifyClientCert` at the TLS layer, then `nsi-pass-tls` + `nsi-dds-proxy-auth` middlewares pass the cert PEM to the validate sidecar, which returns `X-Auth-Method` + `X-Client-DN`.
 - `/openapi.json`, `/docs`, and `/redoc` share the data endpoints' auth dependency: authenticated users in `OIDC_REQUIRED_GROUPS` get the UIs, unauthenticated requests get 401, and authenticated-but-out-of-group requests get 403. `/health` stays unauthenticated for k8s probes.
-- `OIDC_REQUIRED_GROUPS` must be `[]` (not empty string) when no groups are required — pydantic-settings JSON-parses `list[str]` env vars before field validators run, so `""` causes a startup crash.
+- `OIDC_REQUIRED_GROUPS` is `Annotated[list[str], NoDecode]` so its `field_validator` runs on the raw env string: comma-separated, single value, JSON array, and empty (`-> []`) all work. Without `NoDecode`, pydantic-settings JSON-parses `list[str]` env vars before the validator, so anything but a JSON array (including `""`) crashes at startup.
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`
 
 ## Code Style

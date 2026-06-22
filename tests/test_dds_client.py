@@ -70,7 +70,7 @@ class TestGetTopologyDocuments:
   </ns0:documents>
 </ns0:collection>""".encode()
         client = make_mock_http(no_type_xml)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -88,7 +88,7 @@ class TestGetTopologyDocuments:
   </ns0:documents>
 </ns0:collection>""".encode()
         client = make_mock_http(corrupt_xml)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -122,7 +122,7 @@ class TestGetTopologyDocuments:
         mock_http = AsyncMock()
         mock_http.get = AsyncMock(side_effect=[collection_resp, href_resp])
 
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(mock_http, "https://dds.example.net/dds")
         assert len(result) == 1
         assert result[0].id == TOPO_ID
@@ -153,7 +153,7 @@ class TestGetTopologyDocuments:
         mock_http = AsyncMock()
         mock_http.get = AsyncMock(side_effect=[collection_resp, Exception("connection refused")])
 
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(mock_http, "https://dds.example.net/dds")
         assert result == []
 
@@ -167,7 +167,7 @@ class TestFetchTopologies:
     @pytest.mark.asyncio
     async def test_returns_topology_with_correct_id(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert len(result) == 2
         assert any(t.id == TOPO_ID for t in result)
@@ -175,14 +175,14 @@ class TestFetchTopologies:
     @pytest.mark.asyncio
     async def test_returns_topology_name(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result[0].name == "Example Network"
 
     @pytest.mark.asyncio
     async def test_lifetime_populated_from_nml(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result[0].lifetime.start == "2025-01-01T00:00:00Z"
         assert result[0].lifetime.end == "2026-01-01T00:00:00Z"
@@ -190,14 +190,14 @@ class TestFetchTopologies:
     @pytest.mark.asyncio
     async def test_version_from_dds_document(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result[0].version == "2026-01-01T00:00:00Z"
 
     @pytest.mark.asyncio
     async def test_multiple_topologies(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert len(result) == 2
         ids = {t.id for t in result}
@@ -208,7 +208,7 @@ class TestFetchTopologies:
     async def test_empty_collection_returns_empty_list(self):
         collection = make_dds_collection([])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -233,7 +233,7 @@ class TestFetchTopologies:
             ]
         )
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert len(result) == 1
         assert result[0].lifetime.start == "2025-06-01T00:00:00Z"
@@ -254,7 +254,7 @@ class TestFetchTopologies:
   </ns0:documents>
 </ns0:collection>""".encode()
         client = make_mock_http(nsa_collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -268,7 +268,7 @@ class TestFetchSwitchingServices:
     @pytest.mark.asyncio
     async def test_returns_switching_service(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
         assert len(result) == 2
         assert any(s.id == SS_ID for s in result)
@@ -276,7 +276,7 @@ class TestFetchSwitchingServices:
     @pytest.mark.asyncio
     async def test_label_swapping_parsed_as_bool(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
         assert result[0].label_swapping is True
 
@@ -295,14 +295,14 @@ class TestFetchSwitchingServices:
         )
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
         assert result[0].label_swapping is False
 
     @pytest.mark.asyncio
     async def test_encoding_and_label_type(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
         assert result[0].encoding == "http://schemas.ogf.org/nml/2012/10/ethernet"
         assert result[0].label_type == "http://schemas.ogf.org/nml/2012/10/ethernet#vlan"
@@ -310,7 +310,7 @@ class TestFetchSwitchingServices:
     @pytest.mark.asyncio
     async def test_topology_id_set_correctly(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
         assert result[0].topology_id == TOPO_ID
 
@@ -319,7 +319,7 @@ class TestFetchSwitchingServices:
         nml = make_nml_topology()
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -333,7 +333,7 @@ class TestFetchSTPs:
     @pytest.mark.asyncio
     async def test_returns_stp(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert len(result) == 2
         assert any(s.id == PORT_A for s in result)
@@ -341,28 +341,28 @@ class TestFetchSTPs:
     @pytest.mark.asyncio
     async def test_stp_name(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert result[0].name == "Port One"
 
     @pytest.mark.asyncio
     async def test_stp_capacity(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert result[0].capacity == 100000
 
     @pytest.mark.asyncio
     async def test_stp_label_group(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert result[0].label_group == "100-200"
 
     @pytest.mark.asyncio
     async def test_stp_switching_service_id(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert result[0].switching_service_id == SS_ID
 
@@ -374,7 +374,7 @@ class TestFetchSTPs:
         )
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert len(result) == 1
         assert result[0].capacity == 0
@@ -398,7 +398,7 @@ class TestFetchSTPs:
 </nml:Topology>""".encode("utf-8")
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert len(result) == 1
         assert result[0].id == PORT_A
@@ -424,7 +424,7 @@ class TestFetchSTPs:
         )
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_stps(client, "https://dds.example.net/dds")
         assert len(result) == 2
         ids = {s.id for s in result}
@@ -441,7 +441,7 @@ class TestFetchSDPs:
     @pytest.mark.asyncio
     async def test_returns_sdp_from_alias(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
         assert len(result) == 1
         stp_ids = {(r.stp_a_id, r.stp_z_id) for r in result}
@@ -452,7 +452,7 @@ class TestFetchSDPs:
         nml = make_nml_topology(ports=[{"id": PORT_A, "name": "Port A", "capacity": 0, "label_group": ""}])
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -463,7 +463,7 @@ class TestFetchSDPs:
         )
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -488,7 +488,7 @@ class TestFetchSDPs:
 </nml:Topology>""".encode("utf-8")
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -501,7 +501,7 @@ class TestFetchSDPs:
         )
         collection = make_dds_collection([{"id": TOPO_ID, "nml_bytes": nml}])
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
         assert result == []
 
@@ -532,7 +532,7 @@ class TestFetchSDPs:
             ]
         )
         client = make_mock_http(collection)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             result = await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
         assert len(result) == 2
 
@@ -546,7 +546,7 @@ class TestCaching:
     @pytest.mark.asyncio
     async def test_second_call_uses_cache(self):
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
             await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
         # Only one real HTTP call should have been made
@@ -557,7 +557,7 @@ class TestCaching:
         """After the TTL elapses, the cached entry is discarded and a fresh HTTP request is made."""
         client = make_mock_http(SIMPLE_COLLECTION)
         start = 1000.0
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             with patch("dds_proxy.dds_client.time.monotonic", return_value=start):
                 await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
             expired = start + settings.cache_ttl_seconds + 1
@@ -569,7 +569,7 @@ class TestCaching:
     async def test_cache_shared_across_fetch_functions(self):
         """All four fetch_* functions share the same cached topology documents."""
         client = make_mock_http(SIMPLE_COLLECTION)
-        with patch.dict(dds_client._cache, {}, clear=True):
+        with patch.object(dds_client, "_cache", None):
             await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
             await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
             await dds_client.fetch_stps(client, "https://dds.example.net/dds")

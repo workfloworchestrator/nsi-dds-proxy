@@ -296,6 +296,29 @@ def test_required_groups_parsing(env_value: str, expected: list[str]) -> None:
     assert Settings(oidc_required_groups=env_value).oidc_required_groups == expected
 
 
+@pytest.mark.parametrize(
+    ("env_value", "expected"),
+    [
+        pytest.param('["g1","g2"]', ["g1", "g2"], id="json-array"),
+        pytest.param("g1,g2,g3", ["g1", "g2", "g3"], id="comma-separated"),
+        pytest.param("single-group", ["single-group"], id="single-value"),
+        pytest.param("", [], id="empty-string"),
+    ],
+)
+def test_required_groups_parsing_from_env(
+    env_value: str, expected: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The OIDC_REQUIRED_GROUPS env var (the production path) must parse in every form.
+
+    Without the NoDecode annotation on the field, pydantic-settings JSON-decodes
+    this value before the validator runs, so anything but a JSON array crashes.
+    """
+    from dds_proxy.config import Settings
+
+    monkeypatch.setenv("OIDC_REQUIRED_GROUPS", env_value)
+    assert Settings().oidc_required_groups == expected
+
+
 def test_malformed_json_groups_raises_validation_error() -> None:
     from pydantic import ValidationError
 
