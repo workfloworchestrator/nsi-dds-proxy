@@ -19,7 +19,7 @@ dependencies = [
     "lxml==6.1.1",
     "pydantic-settings==2.14.2",
     "structlog==26.1.0",
-    "uvicorn==0.50.2",
+    "uvicorn==0.51.0",
 ]
 
 [project.urls]
@@ -36,8 +36,8 @@ dds-proxy = "dds_proxy.main:run"
 dev = [
     "pytest==9.1.1",
     "pytest-asyncio>=1.3.0",
-    "mypy==2.1.0",
-    "ruff==0.15.20",
+    "mypy==2.3.0",
+    "ruff==0.15.21",
 ]
 
 [tool.pytest.ini_options]
