@@ -55,7 +55,7 @@ The diagram below shows the ANA-GRAM automation stack and how the DDS Proxy fits
 
 ## Prerequisites
 
-- A valid client certificate and private key for mutual TLS authentication with the DDS server.
+- A client certificate and private key, if the DDS server requires mutual TLS authentication.
 - Python 3.13+ (for running from source) or Docker.
 
 ## Configuration
@@ -65,9 +65,16 @@ All settings can be configured via environment variables or a `dds_proxy.env` fi
 | Variable | Default | Description |
 |---|---|---|
 | `DDS_BASE_URL` | `https://your-dds-server/dds` | Base URL of the upstream DDS server. |
-| `DDS_CLIENT_CERT` | _(unset)_ | Path to the PEM-encoded client certificate used for mutual TLS with the DDS server. |
+| `DDS_CLIENT_CERT` | _(unset)_ | Path to the PEM-encoded client certificate presented for mutual TLS with the DDS server. Optional: leave unset to connect without a client certificate. Must be set together with `DDS_CLIENT_KEY`. |
 | `DDS_CLIENT_KEY` | _(unset)_ | Path to the PEM-encoded private key corresponding to the client certificate. |
-| `DDS_CA_BUNDLE` | _(unset)_ | Path to a PEM file containing the CA certificates used to verify the DDS server. When set, replaces the system CA store entirely. |
+| `DDS_CA_BUNDLE` | _(unset)_ | Path to a PEM file containing the CA certificates used to verify the DDS server. When set, replaces the system CA store entirely. Use this to reach a DDS with a private-CA or self-signed certificate. |
+
+The DDS server's certificate is **always verified**, independently of whether a client certificate is
+configured. There is no option to disable verification: point `DDS_CA_BUNDLE` at the issuing CA to
+reach a DDS whose certificate the system trust store does not recognise.
+
+All three paths are validated at startup. A path pointing at a missing file — a typo, or a Secret
+that failed to mount — aborts startup rather than silently weakening the TLS configuration.
 | `CACHE_TTL_SECONDS` | `60` | How long (in seconds) the DDS response is cached before the next upstream fetch. |
 | `HTTP_TIMEOUT_SECONDS` | `30.0` | Timeout (in seconds) for HTTP requests to the DDS server. |
 | `LOG_LEVEL` | `INFO` | Logging verbosity. Accepted values: `DEBUG`, `INFO`, `WARNING`, `ERROR`. |

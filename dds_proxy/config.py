@@ -45,6 +45,18 @@ class Settings(BaseSettings):
     # empty values crash before it runs. See parse_comma_separated_groups.
     oidc_required_groups: Annotated[list[str], NoDecode] = []
 
+    @field_validator("dds_client_cert", "dds_client_key", "dds_ca_bundle")
+    @classmethod
+    def certificate_file_must_exist(cls, v: Path | None) -> Path | None:
+        """Reject a configured certificate path that is not an existing file.
+
+        Failing at startup is deliberate: a mistyped path or an unmounted Secret must not be
+        allowed to silently weaken the TLS configuration used to reach the DDS.
+        """
+        if v is not None and not v.is_file():
+            raise ValueError(f"file not found: {v}")
+        return v
+
     @field_validator("oidc_required_groups", mode="before")
     @classmethod
     def parse_comma_separated_groups(cls, v: object) -> object:

@@ -115,9 +115,9 @@ def configure_logging() -> None:
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown.
 
-    On startup: configures logging, builds an SSL context from the configured
-    client certificate and key, and creates a shared ``httpx2.AsyncClient``
-    attached to ``app.state.http_client``.
+    On startup: configures logging, builds a verifying SSL context from the configured CA bundle
+    (optionally adding a client certificate for mutual TLS), and creates a shared
+    ``httpx2.AsyncClient`` attached to ``app.state.http_client``.
     On shutdown: closes the HTTP client gracefully.
     """
     log = structlog.get_logger(__name__)
@@ -153,26 +153,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         mtls_header=settings.mtls_header,
     )
 
-    ssl_context: ssl.SSLContext | str | bool
-    if (
-        settings.dds_client_cert
-        and settings.dds_client_key
-        and settings.dds_client_cert.is_file()
-        and settings.dds_client_key.is_file()
-    ):
-        ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-        ssl_context.verify_mode = ssl.CERT_REQUIRED
-        ssl_context.check_hostname = True
-        if settings.dds_ca_bundle and settings.dds_ca_bundle.is_file():
-            ssl_context.load_verify_locations(cafile=settings.dds_ca_bundle)
-        else:
-            ssl_context.load_default_certs()
+    # Server verification is always enabled and is independent of whether we present a client
+    # certificate. create_default_context sets CERT_REQUIRED and check_hostname, and falls back to
+    # the system trust store when DDS_CA_BUNDLE is unset. Paths are validated in Settings, so a
+    # missing file fails at startup rather than silently downgrading TLS.
+    ssl_context = ssl.create_default_context(cafile=settings.dds_ca_bundle)
+    if settings.dds_client_cert and settings.dds_client_key:
         ssl_context.load_cert_chain(
             certfile=settings.dds_client_cert,
             keyfile=settings.dds_client_key,
         )
-    else:
-        ssl_context = False
     app.state.http_client = httpx2.AsyncClient(
         verify=ssl_context,
         timeout=settings.http_timeout_seconds,
