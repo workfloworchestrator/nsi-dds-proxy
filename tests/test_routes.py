@@ -44,7 +44,7 @@ def api():
     """TestClient with a mock HTTP client injected onto app.state.
 
     We enter the TestClient context first (which runs the lifespan and creates
-    a real httpx.AsyncClient), then immediately overwrite app.state.http_client
+    a real httpx2.AsyncClient), then immediately overwrite app.state.http_client
     with our mock so all requests during the test use it instead.
     """
     mock_http = AsyncMock()

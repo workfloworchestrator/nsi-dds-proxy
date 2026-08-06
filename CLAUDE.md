@@ -32,7 +32,7 @@ dds-proxy
 
 **FastAPI async application** with these layers:
 
-- **`main.py`** — App entry point. `create_app()` factory builds the FastAPI instance, replaces the built-in OpenAPI/docs/ReDoc routes with custom ones that sit behind the auth dependency (FastAPI's defaults cannot be put behind a `Depends`), and includes the data routers. Lifespan creates the shared `httpx.AsyncClient` with mutual TLS for the upstream DDS, plus structlog logging setup and the unprotected health check
+- **`main.py`** — App entry point. `create_app()` factory builds the FastAPI instance, replaces the built-in OpenAPI/docs/ReDoc routes with custom ones that sit behind the auth dependency (FastAPI's defaults cannot be put behind a `Depends`), and includes the data routers. Lifespan creates the shared `httpx2.AsyncClient` with mutual TLS for the upstream DDS, plus structlog logging setup and the unprotected health check
 - **`config.py`** — Pydantic Settings loaded from env vars or `dds_proxy.env`
 - **`auth.py`** — Reads identity headers set by the edge proxy. The OIDC branch reads `X-Auth-Request-Email` (identity) and `X-Auth-Request-Groups` (group authorisation via set intersection against `OIDC_REQUIRED_GROUPS`). The mTLS branch accepts requests carrying the configured `MTLS_HEADER` (set by `nsi-auth` after cert verification) and logs `X-Client-DN` for audit. `get_authenticated_user` is the FastAPI dependency applied to all data routes via `include_router(dependencies=...)`
 - **`dds_client.py`** — Core logic: fetches DDS collection, filters for topology documents, decodes gzip+base64 content, parses NML XML with lxml namespace-aware XPath. Has an in-memory TTL cache. Four `fetch_*` functions each return a list of parsed Pydantic models
@@ -43,7 +43,7 @@ dds-proxy
 
 ## Key Design Decisions
 
-- Fully async (httpx + FastAPI), stateless with no database
+- Fully async (httpx2 + FastAPI), stateless with no database
 - Mutual TLS for DDS communication (client cert + custom CA bundle)
 - `root_path` setting for serving behind a path-stripping reverse proxy (e.g. the ana-automation-ui portal)
 - XML parsing uses 4 NML/DDS namespaces defined in `dds_client.py`

@@ -23,7 +23,7 @@ import gzip
 import time
 from itertools import chain
 
-import httpx
+import httpx2
 import structlog
 from lxml import etree
 
@@ -92,7 +92,7 @@ def _cache_set(data: TopologyDocuments) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _fetch_collection(client: httpx.AsyncClient, dds_base_url: str) -> etree._Element:
+async def _fetch_collection(client: httpx2.AsyncClient, dds_base_url: str) -> etree._Element:
     url = f"{dds_base_url.rstrip('/')}/documents"
     log.debug("Fetch DDS collection", url=url)
     response = await client.get(url)
@@ -108,7 +108,7 @@ def _decode_topology_content(content_el: etree._Element) -> etree._Element:
 
 
 async def _load_document_by_href(
-    client: httpx.AsyncClient, doc_el: etree._Element
+    client: httpx2.AsyncClient, doc_el: etree._Element
 ) -> tuple[etree._Element, etree._Element] | None:
     """Fetch a document's NML from its ``href`` when there is no inline content."""
     doc_id = doc_el.get("id", "<unknown>")
@@ -128,7 +128,7 @@ async def _load_document_by_href(
 
 
 async def _load_document(
-    client: httpx.AsyncClient, doc_el: etree._Element
+    client: httpx2.AsyncClient, doc_el: etree._Element
 ) -> tuple[etree._Element, etree._Element] | None:
     """Parse one DDS ``<document>`` into ``(doc_el, nml_root)``, or None if it should be skipped."""
     doc_id = doc_el.get("id", "<unknown>")
@@ -163,7 +163,7 @@ async def _load_document(
 
 
 async def _get_topology_documents(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     dds_base_url: str,
 ) -> list[tuple[etree._Element, etree._Element]]:
     cached = _cache_get()
@@ -305,7 +305,7 @@ def _parse_stp(
 
 
 async def fetch_topologies(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     dds_base_url: str,
 ) -> list[Topology]:
     """Fetch topologies from DDS."""
@@ -367,7 +367,7 @@ def _switching_services_for_document(dds_doc: etree._Element, nml_root: etree._E
 
 
 async def fetch_switching_services(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     dds_base_url: str,
 ) -> list[SwitchingService]:
     """Fetch switching services from DDS."""
@@ -408,7 +408,7 @@ def _stps_for_document(nml_root: etree._Element) -> list[ServiceTerminationPoint
 
 
 async def fetch_stps(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     dds_base_url: str,
 ) -> list[ServiceTerminationPoint]:
     """Fetch Service Termination Points from DDS.
@@ -458,7 +458,7 @@ def _dedupe_bidirectional(declared: set[tuple[str, str]]) -> list[ServiceDemarca
 
 
 async def fetch_sdps(
-    client: httpx.AsyncClient,
+    client: httpx2.AsyncClient,
     dds_base_url: str,
 ) -> list[ServiceDemarcationPoint]:
     """Fetch Service Demarcation Points from DDS.

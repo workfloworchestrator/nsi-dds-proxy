@@ -21,7 +21,7 @@ import ssl
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import httpx
+import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
@@ -175,12 +175,12 @@ class TestSslContextWithoutCaBundle:
 
 class TestSslContextSkippedWithoutClientCert:
     def test_verify_false_when_no_cert_configured(self, cert_files):
-        """httpx.AsyncClient is created with verify=False when no client cert is set."""
+        """httpx2.AsyncClient is created with verify=False when no client cert is set."""
         cert, key, _ = cert_files
         settings = make_settings(dds_client_cert=None, dds_client_key=None, dds_ca_bundle=None)
         verify_values = []
 
-        real_async_client = httpx.AsyncClient
+        real_async_client = httpx2.AsyncClient
 
         def capturing_async_client(**kwargs):
             verify_values.append(kwargs.get("verify"))
@@ -188,7 +188,7 @@ class TestSslContextSkippedWithoutClientCert:
 
         with (
             patch("dds_proxy.main.settings", settings),
-            patch("dds_proxy.main.httpx.AsyncClient", side_effect=capturing_async_client),
+            patch("dds_proxy.main.httpx2.AsyncClient", side_effect=capturing_async_client),
             TestClient(app),
         ):
             assert verify_values == [False]

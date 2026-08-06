@@ -18,7 +18,7 @@ import ssl
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-import httpx
+import httpx2
 import structlog
 from fastapi import Depends, FastAPI, Request
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
@@ -116,7 +116,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application startup and shutdown.
 
     On startup: configures logging, builds an SSL context from the configured
-    client certificate and key, and creates a shared ``httpx.AsyncClient``
+    client certificate and key, and creates a shared ``httpx2.AsyncClient``
     attached to ``app.state.http_client``.
     On shutdown: closes the HTTP client gracefully.
     """
@@ -173,7 +173,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
     else:
         ssl_context = False
-    app.state.http_client = httpx.AsyncClient(
+    app.state.http_client = httpx2.AsyncClient(
         verify=ssl_context,
         timeout=settings.http_timeout_seconds,
     )
