@@ -50,7 +50,7 @@ dds-proxy
   opt-out; a private-CA or self-signed DDS is reached via `DDS_CA_BUNDLE`. A `field_validator` in
   `config.py` rejects certificate paths that do not exist, so misconfiguration fails at startup
   instead of silently downgrading TLS
-- `root_path` setting for serving behind a path-stripping reverse proxy (e.g. the ana-automation-ui portal)
+- `ROOT_PATH` is the external path prefix the edge strips (e.g. `/dds-proxy` behind the ana-automation-ui portal). It is applied as an explicit string when building the `/docs`, `/redoc` and `/openapi.json` URLs and is **not** passed to `FastAPI(root_path=...)` — same rule as nsi-mgmt-info and nsi-aura. Setting it on the app stamps `scope["root_path"]` on every request, which shifts any mounted sub-app (`StaticFiles`, MCP) so requests into it 404 while ordinary routes keep answering. Do not derive the prefix from a request header either: `get_swagger_ui_html` interpolates `openapi_url` into a `<script>` block unescaped.
 - XML parsing uses 4 NML/DDS namespaces defined in `dds_client.py`
 - All responses are full collections (no filtering/pagination)
 - Authentication is performed at the edge proxy (Traefik on the dev cluster) and the proxy trusts the resulting identity headers. Two routes converge on the same backend:
