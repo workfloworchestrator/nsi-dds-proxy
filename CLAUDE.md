@@ -60,6 +60,15 @@ dds-proxy
 - `OIDC_REQUIRED_GROUPS` is `Annotated[list[str], NoDecode]` so its `field_validator` runs on the raw env string: comma-separated, single value, JSON array, and empty (`-> []`) all work. Without `NoDecode`, pydantic-settings JSON-parses `list[str]` env vars before the validator, so anything but a JSON array (including `""`) crashes at startup.
 - pytest-asyncio with `asyncio_mode=auto`; tests mock the HTTP client via fixtures in `conftest.py`
 
+## Versioning
+
+The version is the git tag; never edit it. `pyproject.toml` is `dynamic = ["version"]` with
+setuptools-scm, so a tag builds `0.3.1` and any other commit builds `0.3.2.dev<n>+g<sha>`. The
+container build has no `.git`, so `container.yml` resolves the version on the runner and passes
+`--build-arg VERSION`, which the `Dockerfile` exports as `SETUPTOOLS_SCM_PRETEND_VERSION_FOR_DDS_PROXY`.
+Omitting it fails the build by design. `uv.lock` records the project as `(dynamic)` and so does not
+churn per commit.
+
 ## Code Style
 
 - Ruff with Google-style docstrings, 120-char line limit

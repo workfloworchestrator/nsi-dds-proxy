@@ -123,7 +123,6 @@ wheels = [
 
 [[package]]
 name = "dds-proxy"
-version = "0.3.1.dev1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
