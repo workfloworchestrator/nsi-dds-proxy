@@ -69,6 +69,12 @@ container build has no `.git`, so `container.yml` resolves the version on the ru
 Omitting it fails the build by design. `uv.lock` records the project as `(dynamic)` and so does not
 churn per commit.
 
+## Dependency cooldown
+
+`exclude-newer = "8 days"` in `pyproject.toml` and `minimumReleaseAge` in `.github/renovate.json`
+must stay equal. uv enforces the cooldown on indirect dependencies, which Renovate cannot. An urgent
+fix younger than that needs a temporary `exclude-newer-package = { <pkg> = false }`.
+
 ## Code Style
 
 - Ruff with Google-style docstrings, 120-char line limit
