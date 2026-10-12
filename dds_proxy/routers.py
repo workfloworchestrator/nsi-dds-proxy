@@ -19,8 +19,20 @@ from typing import TypeVar
 from fastapi import APIRouter, HTTPException, Request
 
 from dds_proxy.config import settings
-from dds_proxy.dds_client import fetch_sdps, fetch_stps, fetch_switching_services, fetch_topologies
-from dds_proxy.models import ServiceDemarcationPoint, ServiceTerminationPoint, SwitchingService, Topology
+from dds_proxy.dds_client import (
+    fetch_network_service_agents,
+    fetch_sdps,
+    fetch_stps,
+    fetch_switching_services,
+    fetch_topologies,
+)
+from dds_proxy.models import (
+    NetworkServiceAgent,
+    ServiceDemarcationPoint,
+    ServiceTerminationPoint,
+    SwitchingService,
+    Topology,
+)
 
 T = TypeVar("T")
 
@@ -65,3 +77,13 @@ async def get_service_termination_points(request: Request) -> list[ServiceTermin
 async def get_service_demarcation_points(request: Request) -> list[ServiceDemarcationPoint]:
     """Return all SDPs (matched STP pairs) across all DDS topologies."""
     return await _fetch_or_502(fetch_sdps, request)
+
+
+@router.get(
+    "/network-service-agents",
+    response_model=list[NetworkServiceAgent],
+    tags=["network-service-agents"],
+)
+async def get_network_service_agents(request: Request) -> list[NetworkServiceAgent]:
+    """Return all NSAs found in the DDS, with their provider URL, networks, roles and peers."""
+    return await _fetch_or_502(fetch_network_service_agents, request)

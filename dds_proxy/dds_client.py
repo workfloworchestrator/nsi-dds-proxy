@@ -14,8 +14,8 @@
 """The DDS client.
 
 Fetches the DDS collection, extracts topology documents
-(type vnd.ogf.nsi.topology.v2+xml), and parses NML XML into our
-Pydantic models.
+(type vnd.ogf.nsi.topology.v2+xml) and NSA discovery documents
+(type vnd.ogf.nsi.nsa.v1+xml), and parses them into our Pydantic models.
 """
 
 import base64
@@ -30,6 +30,7 @@ from lxml import etree
 from dds_proxy.config import settings
 from dds_proxy.models import (
     Lifetime,
+    NetworkServiceAgent,
     ServiceDemarcationPoint,
     ServiceTerminationPoint,
     SwitchingService,
@@ -50,6 +51,11 @@ NS = {
 }
 
 TOPOLOGY_CONTENT_TYPE = "vnd.ogf.nsi.topology.v2+xml"
+NSA_CONTENT_TYPE = "vnd.ogf.nsi.nsa.v1+xml"
+LOADED_CONTENT_TYPES = {TOPOLOGY_CONTENT_TYPE, NSA_CONTENT_TYPE}
+
+# NSA document interface type of the NSI CS v2 provider endpoint.
+CS_PROVIDER_INTERFACE_TYPE = "application/vnd.ogf.nsi.cs.v2.provider+soap"
 
 HAS_SERVICE = "http://schemas.ogf.org/nml/2013/05/base#hasService"
 HAS_INBOUND_PORT = "http://schemas.ogf.org/nml/2013/05/base#hasInboundPort"
@@ -62,13 +68,14 @@ HAS_PORT_TYPES = {HAS_INBOUND_PORT, HAS_OUTBOUND_PORT}
 # Simple TTL cache
 # ---------------------------------------------------------------------------
 
-TopologyDocuments = list[tuple[etree._Element, etree._Element]]
+Documents = list[tuple[etree._Element, etree._Element]]
+DocumentsByType = dict[str, Documents]
 
-# Single-slot TTL cache: the proxy only ever caches the topology documents.
-_cache: tuple[float, TopologyDocuments] | None = None
+# Single-slot TTL cache of the loaded documents, grouped by DDS content type.
+_cache: tuple[float, DocumentsByType] | None = None
 
 
-def _cache_get() -> TopologyDocuments | None:
+def _cache_get() -> DocumentsByType | None:
     if _cache is None:
         return None
     ts, data = _cache
@@ -81,7 +88,7 @@ def _cache_get() -> TopologyDocuments | None:
     return data
 
 
-def _cache_set(data: TopologyDocuments) -> None:
+def _cache_set(data: DocumentsByType) -> None:
     global _cache
     _cache = (time.monotonic(), data)
     log.debug("Cache set")
@@ -101,7 +108,12 @@ async def _fetch_collection(client: httpx2.AsyncClient, dds_base_url: str) -> et
     return etree.fromstring(response.content)
 
 
-def _decode_topology_content(content_el: etree._Element) -> etree._Element:
+def _document_type(doc_el: etree._Element) -> str:
+    """The DDS ``<document>``'s content type, or '' when it has none."""
+    return (doc_el.findtext("type") or "").strip()
+
+
+def _decode_content(content_el: etree._Element) -> etree._Element:
     raw = base64.b64decode((content_el.text or "").strip())
     xml_bytes = gzip.decompress(raw)
     return etree.fromstring(xml_bytes)
@@ -110,7 +122,7 @@ def _decode_topology_content(content_el: etree._Element) -> etree._Element:
 async def _load_document_by_href(
     client: httpx2.AsyncClient, doc_el: etree._Element
 ) -> tuple[etree._Element, etree._Element] | None:
-    """Fetch a document's NML from its ``href`` when there is no inline content."""
+    """Fetch a document's XML from its ``href`` when there is no inline content."""
     doc_id = doc_el.get("id", "<unknown>")
     href = doc_el.get("href")
     log.debug("DDS document no inline content", doc_id=doc_id, href=href)
@@ -119,9 +131,9 @@ async def _load_document_by_href(
     try:
         resp = await client.get(href)
         resp.raise_for_status()
-        nml_root = etree.fromstring(resp.content)
+        root = etree.fromstring(resp.content)
         log.debug("DDS document fetched by href", doc_id=doc_id, status=resp.status_code)
-        return (doc_el, nml_root)
+        return (doc_el, root)
     except Exception as exc:
         log.warning("DDS document href fetch failed", doc_id=doc_id, href=href, error=str(exc))
         return None
@@ -130,45 +142,37 @@ async def _load_document_by_href(
 async def _load_document(
     client: httpx2.AsyncClient, doc_el: etree._Element
 ) -> tuple[etree._Element, etree._Element] | None:
-    """Parse one DDS ``<document>`` into ``(doc_el, nml_root)``, or None if it should be skipped."""
+    """Parse one DDS ``<document>`` into ``(doc_el, root)``, or None if it should be skipped."""
     doc_id = doc_el.get("id", "<unknown>")
-    type_el = doc_el.find("type")
-    if type_el is None:
-        log.debug("DDS document skipped", doc_id=doc_id, reason="no type element")
+    doc_type = _document_type(doc_el)
+    if doc_type not in LOADED_CONTENT_TYPES:
+        log.debug("DDS document skipped", doc_id=doc_id, type=doc_type, reason="not a topology or NSA document")
         return None
 
-    doc_type = (type_el.text or "").strip()
-    if doc_type != TOPOLOGY_CONTENT_TYPE:
-        log.debug("DDS document skipped", doc_id=doc_id, type=doc_type, reason="not a topology document")
-        return None
-
-    log.debug("DDS document processing", doc_id=doc_id)
+    log.debug("DDS document processing", doc_id=doc_id, type=doc_type)
 
     content_el = doc_el.find("content")
     if content_el is None or not content_el.text:
         return await _load_document_by_href(client, doc_el)
 
     try:
-        nml_root = _decode_topology_content(content_el)
+        root = _decode_content(content_el)
         log.debug(
             "DDS document decoded",
             doc_id=doc_id,
-            nml_root_tag=etree.QName(nml_root.tag).localname,
-            nml_id=nml_root.get("id", "<no id>"),
+            root_tag=etree.QName(root.tag).localname,
+            root_id=root.get("id", "<no id>"),
         )
-        return (doc_el, nml_root)
+        return (doc_el, root)
     except Exception as exc:
         log.warning("DDS document decode failed", doc_id=doc_id, error=str(exc))
         return None
 
 
-async def _get_topology_documents(
-    client: httpx2.AsyncClient,
-    dds_base_url: str,
-) -> list[tuple[etree._Element, etree._Element]]:
+async def _get_documents(client: httpx2.AsyncClient, dds_base_url: str) -> DocumentsByType:
     cached = _cache_get()
     if cached is not None:
-        log.debug("DDS topology documents from cache", count=len(cached))
+        log.debug("DDS documents from cache", count=sum(map(len, cached.values())))
         return cached
 
     collection = await _fetch_collection(client, dds_base_url)
@@ -181,9 +185,21 @@ async def _get_topology_documents(
         if loaded is not None:
             results.append(loaded)
 
-    log.debug("DDS topology documents ready", count=len(results))
-    _cache_set(results)
-    return results
+    log.debug("DDS documents ready", count=len(results))
+    by_type = {
+        doc_type: [doc for doc in results if _document_type(doc[0]) == doc_type] for doc_type in LOADED_CONTENT_TYPES
+    }
+    _cache_set(by_type)
+    return by_type
+
+
+async def _get_documents_of_type(client: httpx2.AsyncClient, dds_base_url: str, doc_type: str) -> Documents:
+    """The loaded documents whose DDS content type is ``doc_type``."""
+    return (await _get_documents(client, dds_base_url))[doc_type]
+
+
+async def _get_topology_documents(client: httpx2.AsyncClient, dds_base_url: str) -> Documents:
+    return await _get_documents_of_type(client, dds_base_url, TOPOLOGY_CONTENT_TYPE)
 
 
 def _collect_inbound_ports(nml_root: etree._Element) -> dict[str, etree._Element]:
@@ -212,7 +228,7 @@ def _find_matching_inbound_port(
     return None
 
 
-def _build_pg_to_stp_map(docs: TopologyDocuments) -> dict[str, str]:
+def _build_pg_to_stp_map(docs: Documents) -> dict[str, str]:
     """Build a reverse map from PortGroup id to parent BidirectionalPort id across all topologies."""
     return {
         pg_id: stp_id
@@ -483,3 +499,46 @@ async def fetch_sdps(
     sdps = _dedupe_bidirectional(declared)
     log.debug("fetch sdps done", count=len(sdps))
     return sdps
+
+
+def _child_texts(nsa_root: etree._Element, tag: str) -> list[str]:
+    """The stripped, non-empty texts of every ``tag`` child, in either the NSA or no namespace."""
+    return [text for el in nsa_root.findall(f"{{*}}{tag}") if (text := (el.text or "").strip())]
+
+
+def _provider_url(nsa_root: etree._Element) -> str | None:
+    """The href of the NSA's first NSI CS v2 provider interface, as nsi-pce selects it."""
+    hrefs = (
+        (interface.findtext("{*}href") or "").strip()
+        for interface in nsa_root.findall("{*}interface")
+        if (interface.findtext("{*}type") or "").strip().lower() == CS_PROVIDER_INTERFACE_TYPE
+    )
+    return next((href for href in hrefs if href), None)
+
+
+def _parse_nsa(dds_doc: etree._Element, nsa_root: etree._Element) -> NetworkServiceAgent:
+    """Parse one NSA discovery document."""
+    nsa_id = nsa_root.get("id") or dds_doc.get("id") or ""
+    name = (nsa_root.findtext("{*}name") or "").strip() or nsa_id
+    roles = [feature_type for el in nsa_root.findall("{*}feature") if (feature_type := (el.get("type") or "").strip())]
+    log.debug("fetch network service agents parsed", nsa_id=nsa_id, roles=roles)
+    return NetworkServiceAgent(
+        id=nsa_id,
+        name=name,
+        provider_url=_provider_url(nsa_root),
+        network_ids=_child_texts(nsa_root, "networkId"),
+        roles=roles,
+        peers_with=_child_texts(nsa_root, "peersWith"),
+    )
+
+
+async def fetch_network_service_agents(
+    client: httpx2.AsyncClient,
+    dds_base_url: str,
+) -> list[NetworkServiceAgent]:
+    """Fetch the Network Service Agents from their DDS discovery documents."""
+    log.debug("fetch network service agents start")
+    docs = await _get_documents_of_type(client, dds_base_url, NSA_CONTENT_TYPE)
+    agents = [_parse_nsa(dds_doc, nsa_root) for dds_doc, nsa_root in docs]
+    log.debug("fetch network service agents done", count=len(agents))
+    return agents

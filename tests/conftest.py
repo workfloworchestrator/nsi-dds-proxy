@@ -20,7 +20,13 @@ from unittest.mock import patch
 import pytest
 
 from dds_proxy import dds_client
-from dds_proxy.dds_client import IS_ALIAS, NS, TOPOLOGY_CONTENT_TYPE
+from dds_proxy.dds_client import (
+    CS_PROVIDER_INTERFACE_TYPE,
+    IS_ALIAS,
+    NS,
+    NSA_CONTENT_TYPE,
+    TOPOLOGY_CONTENT_TYPE,
+)
 
 # ---------------------------------------------------------------------------
 # Namespace constants
@@ -31,6 +37,10 @@ NML_NS = NS["nml"]
 ETH_NS = NS["eth"]
 ALIAS = IS_ALIAS
 TOPO_TYPE = TOPOLOGY_CONTENT_TYPE
+NSA_NS = "http://schemas.ogf.org/nsi/2014/02/discovery/nsa"
+NSA_ID = "urn:ogf:network:example.net:2020:nsa:supa"
+NSA_NAME = "Example uPA"
+PEER_NSA_ID = "urn:ogf:network:example.net:2020:nsa:safnari"
 
 
 # ---------------------------------------------------------------------------
@@ -141,11 +151,38 @@ def gzip_b64(data: bytes) -> str:
     return base64.b64encode(gzip.compress(data)).decode("ascii")
 
 
+def _elements(tag: str, texts: list[str] | None) -> str:
+    return "".join(f"<{tag}>{text}</{tag}>" for text in texts or [])
+
+
+def make_nsa_document(
+    name: str | None = NSA_NAME,
+    interfaces: list[tuple[str, str]] | None = None,
+    network_ids: list[str] | None = None,
+    features: list[str] | None = None,
+    peers_with: list[str] | None = None,
+) -> bytes:
+    """Build the NSA discovery document of ``NSA_ID``; ``interfaces`` holds ``(type, href)`` pairs."""
+    name_xml = _elements("name", [name] if name is not None else None)
+    interfaces_xml = "".join(
+        f"<interface><type>{interface_type}</type><href>{href}</href></interface>"
+        for interface_type, href in interfaces or []
+    )
+    features_xml = "".join(f'<feature type="{feature}"/>' for feature in features or [])
+    networks_xml = _elements("networkId", network_ids)
+    peers_xml = _elements("peersWith", peers_with)
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<nsa:nsa xmlns:nsa="{NSA_NS}" id="{NSA_ID}" version="2026-01-01T00:00:00Z">
+  {name_xml}{networks_xml}{interfaces_xml}{features_xml}{peers_xml}
+</nsa:nsa>""".encode("utf-8")
+
+
 def make_dds_collection(topologies: list[dict]) -> bytes:
     """Build a DDS collection XML document.
 
     topologies: list of dicts with keys:
-        id, version, expires, nml_bytes (raw NML XML bytes)
+        id, version, expires, nml_bytes (raw document XML bytes),
+        type (DDS content type, defaults to the topology type)
     """
     docs_xml = ""
     for t in topologies:
@@ -158,7 +195,7 @@ def make_dds_collection(topologies: list[dict]) -> bytes:
             expires="{t.get("expires", "2026-12-31T00:00:00Z")}"
             xmlns:ns0="{DDS_NS}">
           <nsa>urn:ogf:network:example.net:2020:nsa</nsa>
-          <type>{TOPO_TYPE}</type>
+          <type>{t.get("type", TOPO_TYPE)}</type>
           <content contentType="application/x-gzip" contentTransferEncoding="base64">{encoded}</content>
         </ns0:document>"""
 
@@ -232,6 +269,26 @@ SIMPLE_COLLECTION = make_dds_collection(
     [
         {"id": TOPO_ID, "nml_bytes": SIMPLE_NML},
         {"id": TOPO_ID_2, "nml_bytes": SIMPLE_NML_2},
+    ]
+)
+
+UPA_ROLE = "vnd.ogf.nsi.cs.v2.role.uPA"
+PROVIDER_URL = "https://supa.example.net/nsi/v2/provider"
+TOPOLOGY_INTERFACE = (f"application/{TOPO_TYPE}", "https://supa.example.net/topology")
+
+SIMPLE_NSA = make_nsa_document(
+    interfaces=[TOPOLOGY_INTERFACE, (CS_PROVIDER_INTERFACE_TYPE, PROVIDER_URL)],
+    network_ids=[TOPO_ID],
+    features=[UPA_ROLE],
+    peers_with=[PEER_NSA_ID],
+)
+
+# The topologies plus one NSA document, to check each endpoint reads only its own document type.
+MIXED_COLLECTION = make_dds_collection(
+    [
+        {"id": TOPO_ID, "nml_bytes": SIMPLE_NML},
+        {"id": TOPO_ID_2, "nml_bytes": SIMPLE_NML_2},
+        {"id": NSA_ID, "nml_bytes": SIMPLE_NSA, "type": NSA_CONTENT_TYPE},
     ]
 )
 

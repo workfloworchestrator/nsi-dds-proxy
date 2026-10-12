@@ -203,7 +203,7 @@ def create_app() -> FastAPI:
         description=(
             "REST proxy for the NSI Document Distribution Service. "
             "Returns topologies, switching services, STPs, and SDPs "
-            "extracted from DDS topology documents."
+            "extracted from DDS topology documents, and the NSAs from their discovery documents."
         ),
         version=importlib.metadata.version("dds-proxy"),
         lifespan=lifespan,

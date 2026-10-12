@@ -24,19 +24,31 @@ import pytest
 
 from dds_proxy import dds_client
 from dds_proxy.config import settings
+from dds_proxy.dds_client import CS_PROVIDER_INTERFACE_TYPE as PROVIDER
+from dds_proxy.dds_client import NSA_CONTENT_TYPE
+from dds_proxy.models import NetworkServiceAgent
 from tests.conftest import (
     DDS_NS,
     ETH_NS,
+    MIXED_COLLECTION,
     NML_NS,
+    NSA_ID,
+    NSA_NAME,
+    NSA_NS,
+    PEER_NSA_ID,
     PORT_A,
     PORT_Z,
     PORT_Z_IN,
+    PROVIDER_URL,
     SIMPLE_COLLECTION,
     SS_ID,
     TOPO_ID,
     TOPO_ID_2,
+    TOPOLOGY_INTERFACE,
+    UPA_ROLE,
     make_dds_collection,
     make_nml_topology,
+    make_nsa_document,
 )
 
 # ---------------------------------------------------------------------------
@@ -240,23 +252,21 @@ class TestFetchTopologies:
         assert result[0].lifetime.end == "2026-06-01T00:00:00Z"
 
     @pytest.mark.asyncio
-    async def test_nsa_documents_are_skipped(self):
-        """Documents with type vnd.ogf.nsi.nsa.v1+xml must not be parsed as topologies."""
-        nsa_collection = """<?xml version="1.0" encoding="UTF-8"?>
-<ns0:collection xmlns:ns0="http://schemas.ogf.org/nsi/2014/02/discovery/types">
-  <ns0:documents>
-    <ns0:document id="urn:ogf:network:example.net:2020:nsa"
-        href="https://dds.example.net/dds/documents/nsa"
-        version="2026-01-01T00:00:00Z" expires="2026-12-31T00:00:00Z">
-      <ns0:type>vnd.ogf.nsi.nsa.v1+xml</ns0:type>
-      <ns0:content contentType="application/x-gzip" contentTransferEncoding="base64">dummydata</ns0:content>
-    </ns0:document>
-  </ns0:documents>
-</ns0:collection>""".encode()
-        client = make_mock_http(nsa_collection)
+    @pytest.mark.parametrize(
+        ("fetch", "expected"),
+        [
+            pytest.param(dds_client.fetch_topologies, 2, id="topologies"),
+            pytest.param(dds_client.fetch_switching_services, 2, id="switching-services"),
+            pytest.param(dds_client.fetch_stps, 2, id="stps"),
+            pytest.param(dds_client.fetch_sdps, 1, id="sdps"),
+        ],
+    )
+    async def test_nsa_documents_are_not_parsed_as_topologies(self, fetch, expected):
+        """NSA documents in the collection do not reach the topology parsers."""
+        client = make_mock_http(MIXED_COLLECTION)
         with patch.object(dds_client, "_cache", None):
-            result = await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
-        assert result == []
+            result = await fetch(client, "https://dds.example.net/dds")
+        assert len(result) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -567,11 +577,75 @@ class TestCaching:
 
     @pytest.mark.asyncio
     async def test_cache_shared_across_fetch_functions(self):
-        """All four fetch_* functions share the same cached topology documents."""
-        client = make_mock_http(SIMPLE_COLLECTION)
+        """All fetch_* functions share the same cached documents."""
+        client = make_mock_http(MIXED_COLLECTION)
         with patch.object(dds_client, "_cache", None):
             await dds_client.fetch_topologies(client, "https://dds.example.net/dds")
             await dds_client.fetch_switching_services(client, "https://dds.example.net/dds")
             await dds_client.fetch_stps(client, "https://dds.example.net/dds")
             await dds_client.fetch_sdps(client, "https://dds.example.net/dds")
+            await dds_client.fetch_network_service_agents(client, "https://dds.example.net/dds")
         assert client.get.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# fetch_network_service_agents
+# ---------------------------------------------------------------------------
+
+
+async def _fetch_nsas(collection: bytes) -> list[NetworkServiceAgent]:
+    return await dds_client.fetch_network_service_agents(make_mock_http(collection), "https://dds.example.net/dds")
+
+
+def _nsa_collection(nsa_xml: bytes) -> bytes:
+    return make_dds_collection([{"id": NSA_ID, "nml_bytes": nsa_xml, "type": NSA_CONTENT_TYPE}])
+
+
+class TestFetchNetworkServiceAgents:
+    @pytest.mark.asyncio
+    async def test_parses_only_nsa_documents(self):
+        assert await _fetch_nsas(MIXED_COLLECTION) == [
+            NetworkServiceAgent(
+                id=NSA_ID,
+                name=NSA_NAME,
+                provider_url=PROVIDER_URL,
+                network_ids=[TOPO_ID],
+                roles=[UPA_ROLE],
+                peers_with=[PEER_NSA_ID],
+            )
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("interfaces", "expected"),
+        [
+            pytest.param([], None, id="no-interfaces"),
+            pytest.param([TOPOLOGY_INTERFACE], None, id="no-provider"),
+            pytest.param([(PROVIDER.upper(), PROVIDER_URL)], PROVIDER_URL, id="type-case-insensitive"),
+            pytest.param([(PROVIDER, f"  {PROVIDER_URL}\n")], PROVIDER_URL, id="href-stripped"),
+            pytest.param([(PROVIDER, "")], None, id="empty-href"),
+            pytest.param(
+                [(PROVIDER, "https://first/provider"), (PROVIDER, "https://second/provider")],
+                "https://first/provider",
+                id="first-provider-wins",
+            ),
+        ],
+    )
+    async def test_provider_url(self, interfaces, expected):
+        [nsa] = await _fetch_nsas(_nsa_collection(make_nsa_document(interfaces=interfaces)))
+        assert nsa.provider_url == expected
+
+    @pytest.mark.asyncio
+    async def test_name_defaults_to_id(self):
+        [nsa] = await _fetch_nsas(_nsa_collection(make_nsa_document(name=None)))
+        assert nsa.name == NSA_ID
+
+    @pytest.mark.asyncio
+    async def test_namespaced_children_are_read(self):
+        """Children in the NSA namespace are read like the usual unqualified ones."""
+        nsa_xml = f"""<nsa:nsa xmlns:nsa="{NSA_NS}" id="{NSA_ID}">
+  <nsa:name>Qualified</nsa:name>
+  <nsa:interface><nsa:type>{PROVIDER}</nsa:type><nsa:href>{PROVIDER_URL}</nsa:href></nsa:interface>
+</nsa:nsa>""".encode()
+        [nsa] = await _fetch_nsas(_nsa_collection(nsa_xml))
+        assert (nsa.name, nsa.provider_url) == ("Qualified", PROVIDER_URL)
