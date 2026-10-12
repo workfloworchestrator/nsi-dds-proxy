@@ -2,7 +2,8 @@
 
 The NSI Document Distribution Service proxy offers a REST API to retrieve
 topologies, switching services, service termination points, and service
-demarcation points from the combined topology documents found on the DDS.  The
+demarcation points from the combined topology documents found on the DDS, and
+the Network Service Agents from their NSA discovery documents.  The
 information returned is a subset as needed by NSI ultimate Requester Agents
 like the NSI Orchestrator, SENSE, and others.
 
@@ -45,7 +46,7 @@ The diagram below shows the ANA-GRAM automation stack and how the DDS Proxy fits
 
 - [**AMISS**](https://github.com/workfloworchestrator/nsi-mgmt-info) — The NSI Management Information Service, a read-only management portal giving an overview of the services configured on the ANA infrastructure and their operational status. It queries the NSI Orchestrator as its source of truth, the DDS Proxy to reconcile the known topology against it, and the NSI Aggregator Proxy for multi-domain circuit paths.
 - [**NSI Orchestrator**](https://github.com/workfloworchestrator/nsi-orchestrator) — Central orchestration layer that manages the lifecycle of topologies, switching services, STPs, SDPs, and multi-domain connections. It uses the DDS Proxy for topology visibility and the NSI Aggregator Proxy as its Network Resource Manager.
-- [**DDS Proxy**](https://github.com/workfloworchestrator/nsi-dds-proxy) (this repository) — Fetches NML topology documents from the upstream DDS, parses them, and exposes the data as a JSON REST API.
+- [**DDS Proxy**](https://github.com/workfloworchestrator/nsi-dds-proxy) (this repository) — Fetches NML topology and NSA discovery documents from the upstream DDS, parses them, and exposes the data as a JSON REST API.
 - [**NSI Aggregator Proxy**](https://github.com/workfloworchestrator/nsi-aggregator-proxy) — Translates simple REST/JSON calls into NSI Connection Service v2 SOAP messages toward the NSI Aggregator, abstracting NSI protocol complexity behind a linear state machine.
 - [**DDS**](https://github.com/BandwidthOnDemand/nsi-dds) — The NSI Document Distribution Service, a distributed registry where networks publish and discover NML topology documents and NSA descriptions.
 - [**PCE**](https://github.com/BandwidthOnDemand/nsi-pce) — The NSI Path Computation Element, which computes end-to-end paths across multiple network domains using topology information from the DDS.
@@ -484,6 +485,26 @@ switching service found in all topologies.
   {
     "stpAId": "urn:ogf:network:example.domain.toplevel:2020:topology:ps1",
     "stpZId": "urn:ogf:network:another.domain.toplevel:1999:topology:data-center-3"
+  },
+  ...
+]
+```
+
+### GET /network-service-agents
+
+Get a list of Network Service Agents from their NSA discovery documents in DDS.
+`providerUrl` is the first `application/vnd.ogf.nsi.cs.v2.provider+soap` interface,
+or `null` when the NSA advertises none. `roles` lists the NSA's feature types.
+
+```json
+[
+  {
+    "id": "urn:ogf:network:example.domain.toplevel:2020:nsa:supa",
+    "name": "example.domain uPA",
+    "providerUrl": "https://supa.example.domain.toplevel/nsi/v2/provider",
+    "networkIds": ["urn:ogf:network:example.domain.toplevel:2020:topology"],
+    "roles": ["vnd.ogf.nsi.cs.v2.role.uPA"],
+    "peersWith": []
   },
   ...
 ]

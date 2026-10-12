@@ -57,6 +57,21 @@ class ServiceTerminationPoint(BaseModel):
     model_config = {"populate_by_name": True, "alias_generator": to_camel}
 
 
+class NetworkServiceAgent(BaseModel):
+    """Network Service Agent details, from its DDS discovery document."""
+
+    id: str
+    name: str
+    # The NSI CS v2 provider endpoint; None when the NSA does not advertise one.
+    provider_url: str | None
+    network_ids: list[str]
+    # The ``feature`` types, e.g. ``vnd.ogf.nsi.cs.v2.role.uPA``.
+    roles: list[str]
+    peers_with: list[str]
+
+    model_config = {"populate_by_name": True, "alias_generator": to_camel}
+
+
 class ServiceDemarcationPoint(BaseModel):
     """Service demarcation point details."""
 

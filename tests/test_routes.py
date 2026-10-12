@@ -25,11 +25,17 @@ from fastapi.testclient import TestClient
 from dds_proxy import dds_client
 from dds_proxy.main import app
 from tests.conftest import (
+    MIXED_COLLECTION,
+    NSA_ID,
+    NSA_NAME,
+    PEER_NSA_ID,
     PORT_A,
     PORT_Z,
+    PROVIDER_URL,
     SIMPLE_COLLECTION,
     SS_ID,
     TOPO_ID,
+    UPA_ROLE,
     make_dds_collection,
     make_nml_topology,
 )
@@ -226,3 +232,35 @@ class TestSDPsRoute:
         client, mock_http = api
         mock_http.get.side_effect = Exception("timeout")
         assert client.get("/service-demarcation-points").status_code == 502
+
+
+# ---------------------------------------------------------------------------
+# GET /network-service-agents
+# ---------------------------------------------------------------------------
+
+
+class TestNetworkServiceAgentsRoute:
+    def test_nsa_fields(self, api):
+        client, mock_http = api
+        mock_http.get.return_value.content = MIXED_COLLECTION
+        response = client.get("/network-service-agents")
+        assert response.status_code == 200
+        assert response.json() == [
+            {
+                "id": NSA_ID,
+                "name": NSA_NAME,
+                "providerUrl": PROVIDER_URL,
+                "networkIds": [TOPO_ID],
+                "roles": [UPA_ROLE],
+                "peersWith": [PEER_NSA_ID],
+            }
+        ]
+
+    def test_empty_without_nsa_documents(self, api):
+        client, _ = api
+        assert client.get("/network-service-agents").json() == []
+
+    def test_502_on_dds_failure(self, api):
+        client, mock_http = api
+        mock_http.get.side_effect = Exception("timeout")
+        assert client.get("/network-service-agents").status_code == 502
